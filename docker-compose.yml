@@ -1,0 +1,20 @@
+services:
+  paradedb:
+    image: paradedb/paradedb:latest
+    container_name: simplykb-paradedb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-simplykb}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-simplykb}
+      POSTGRES_DB: ${POSTGRES_DB:-simplykb}
+    ports:
+      - "${PARADEDB_PORT:-25432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - paradedb-data:/var/lib/postgresql
+
+volumes:
+  paradedb-data:
