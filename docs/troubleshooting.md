@@ -12,11 +12,19 @@ Symptoms:
 
 What to check:
 
-1. Start the bundled database with `docker compose up -d`.
-2. Confirm the container is healthy with `docker compose ps`.
+1. Start the bundled database with `make db-up`.
+2. Confirm the container is healthy with `make db-status`.
 3. Confirm `SIMPLYKB_DATABASE_URL` points to `localhost:25432` unless you changed the port.
 
 If the database is not running, the SDK cannot create the pool or run migrations.
+
+If you see an "address already in use" error on port `25432`, restart with a different port:
+
+```bash
+PARADEDB_PORT=35432 make db-up
+SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:35432/simplykb?sslmode=disable \
+go run ./examples/quickstart
+```
 
 ## Using Plain Postgres Instead Of ParadeDB
 
@@ -71,8 +79,7 @@ What to check:
 For the quickstart, the easiest check is to rerun:
 
 ```bash
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable \
-go run ./examples/quickstart
+make smoke
 ```
 
 If that works, the local stack is healthy.

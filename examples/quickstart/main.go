@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/liu-y/simplykb"
+	"github.com/LyleLiu666/simplykb"
 )
 
 func main() {

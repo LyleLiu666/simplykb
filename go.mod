@@ -1,4 +1,4 @@
-module github.com/liu-y/simplykb
+module github.com/LyleLiu666/simplykb
 
 go 1.25.0
 

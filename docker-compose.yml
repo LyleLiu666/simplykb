@@ -1,7 +1,6 @@
 services:
   paradedb:
     image: paradedb/paradedb:latest
-    container_name: simplykb-paradedb
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-simplykb}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-simplykb}

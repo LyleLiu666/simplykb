@@ -24,13 +24,20 @@ Please keep that promise in mind when proposing or implementing changes.
 Start the local database:
 
 ```bash
-docker compose up -d
+make db-up
+make db-status
 ```
 
 The default local connection string is:
 
 ```bash
 postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable
+```
+
+If `25432` is already taken, start the local database with a different port:
+
+```bash
+PARADEDB_PORT=35432 make db-up
 ```
 
 ## Run Tests
@@ -45,15 +52,13 @@ go vet ./...
 Run integration tests:
 
 ```bash
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable \
-go test ./... -run Integration
+make integration-test
 ```
 
 Run the quickstart example:
 
 ```bash
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable \
-go run ./examples/quickstart
+make smoke
 ```
 
 ## When To Add Unit Tests

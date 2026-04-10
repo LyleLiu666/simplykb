@@ -72,22 +72,47 @@ Choose another system if you need those capabilities today.
 
 ## Quick Start
 
-### 1. Start ParadeDB
+### 1. Fastest local smoke run
 
 ```bash
-docker compose up -d
-docker compose ps
+make smoke
+```
+
+This command:
+
+- starts the bundled ParadeDB database
+- waits until the database health check passes
+- runs the quickstart example against the default local URL
+
+### 2. Manual path
+
+If you want to see each step explicitly:
+
+```bash
+make db-up
+make db-status
+go run ./examples/quickstart
+```
+
+The quickstart example already defaults to:
+
+```bash
+postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable
+```
+
+Set `SIMPLYKB_DATABASE_URL` only if you changed the local port, credentials, or database name.
+
+If `25432` is already in use on your machine, choose another port when starting the bundled database:
+
+```bash
+PARADEDB_PORT=35432 make db-up
+SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:35432/simplykb?sslmode=disable \
+go run ./examples/quickstart
 ```
 
 This repository expects ParadeDB, not plain Postgres.
-Wait until the `paradedb` service shows as healthy before running the example.
 
-### 2. Run the example
-
-```bash
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable \
-go run ./examples/quickstart
-```
+### 3. Run tests
 
 Example output shape:
 
@@ -108,12 +133,9 @@ Success signals:
 - at least one search hit is returned
 - you do not need exact scores or snippet text to match byte-for-byte
 
-### 3. Run tests
-
 ```bash
 go test ./...
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable \
-go test ./... -run Integration
+make integration-test
 ```
 
 Use the integration command whenever a change affects setup, migrations, document normalization, or retrieval behavior.
@@ -123,8 +145,13 @@ Use the integration command whenever a change affects setup, migrations, documen
 Demo API example:
 
 ```go
+databaseURL := os.Getenv("SIMPLYKB_DATABASE_URL")
+if databaseURL == "" {
+    databaseURL = "postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable"
+}
+
 store, err := simplykb.New(ctx, simplykb.Config{
-    DatabaseURL:         os.Getenv("SIMPLYKB_DATABASE_URL"),
+    DatabaseURL:         databaseURL,
     DefaultCollection:   "docs",
     EmbeddingDimensions: 256,
     MaxConns:            8,
