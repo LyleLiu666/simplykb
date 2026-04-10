@@ -40,6 +40,8 @@ If `25432` is already taken, start the local database with a different port:
 PARADEDB_PORT=35432 make db-up
 ```
 
+The quickstart and integration targets now follow `PARADEDB_PORT` automatically for the local default URL.
+
 ## Run Tests
 
 Run the baseline test suite:
@@ -55,10 +57,22 @@ Run integration tests:
 make integration-test
 ```
 
+If you changed the local ParadeDB port:
+
+```bash
+PARADEDB_PORT=35432 make integration-test
+```
+
 Run the quickstart example:
 
 ```bash
 make smoke
+```
+
+If you changed the local ParadeDB port:
+
+```bash
+PARADEDB_PORT=35432 make smoke
 ```
 
 ## When To Add Unit Tests

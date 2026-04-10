@@ -1,6 +1,6 @@
 services:
   paradedb:
-    image: paradedb/paradedb:latest
+    image: paradedb/paradedb@sha256:2359a3628682f2dfc4ee65ed59f6a993d7851ed3d820b0c030c397ff7168b620
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-simplykb}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-simplykb}

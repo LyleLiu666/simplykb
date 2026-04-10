@@ -5,16 +5,21 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/LyleLiu666/simplykb"
 )
 
+const (
+	defaultLocalUser = "simplykb"
+	defaultLocalPass = "simplykb"
+	defaultLocalDB   = "simplykb"
+	defaultLocalPort = "25432"
+)
+
 func main() {
 	ctx := context.Background()
-	databaseURL := os.Getenv("SIMPLYKB_DATABASE_URL")
-	if databaseURL == "" {
-		databaseURL = "postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable"
-	}
+	databaseURL := defaultDatabaseURL()
 
 	store, err := simplykb.New(ctx, simplykb.Config{
 		DatabaseURL:         databaseURL,
@@ -73,4 +78,30 @@ func main() {
 		fmt.Printf("- %s chunk=%d score=%.4f keyword=%.4f vector=%.4f\n", hit.DocumentID, hit.ChunkNumber, hit.Score, hit.KeywordScore, hit.VectorScore)
 		fmt.Printf("  snippet: %s\n", hit.Snippet)
 	}
+}
+
+func defaultDatabaseURL() string {
+	if databaseURL := strings.TrimSpace(os.Getenv("SIMPLYKB_DATABASE_URL")); databaseURL != "" {
+		return databaseURL
+	}
+
+	user := envOrDefault("POSTGRES_USER", defaultLocalUser)
+	password := envOrDefault("POSTGRES_PASSWORD", defaultLocalPass)
+	database := envOrDefault("POSTGRES_DB", defaultLocalDB)
+	port := envOrDefault("PARADEDB_PORT", defaultLocalPort)
+
+	return fmt.Sprintf(
+		"postgres://%s:%s@localhost:%s/%s?sslmode=disable",
+		user,
+		password,
+		port,
+		database,
+	)
+}
+
+func envOrDefault(key string, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }

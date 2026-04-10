@@ -14,16 +14,21 @@ What to check:
 
 1. Start the bundled database with `make db-up`.
 2. Confirm the container is healthy with `make db-status`.
-3. Confirm `SIMPLYKB_DATABASE_URL` points to `localhost:25432` unless you changed the port.
+3. Confirm the local URL points to `localhost:25432` unless you changed the port.
 
 If the database is not running, the SDK cannot create the pool or run migrations.
 
 If you see an "address already in use" error on port `25432`, restart with a different port:
 
 ```bash
+PARADEDB_PORT=35432 make smoke
+```
+
+or:
+
+```bash
 PARADEDB_PORT=35432 make db-up
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:35432/simplykb?sslmode=disable \
-go run ./examples/quickstart
+PARADEDB_PORT=35432 go run ./examples/quickstart
 ```
 
 ## Using Plain Postgres Instead Of ParadeDB
@@ -97,8 +102,13 @@ The test suite only runs integration tests when `SIMPLYKB_DATABASE_URL` is set.
 Fix:
 
 ```bash
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable \
-go test ./... -run Integration
+make integration-test
+```
+
+If you changed the local ParadeDB port:
+
+```bash
+PARADEDB_PORT=35432 make integration-test
 ```
 
 ## Need More Context

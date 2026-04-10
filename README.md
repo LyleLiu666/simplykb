@@ -2,9 +2,31 @@
 
 [![CI](https://github.com/LyleLiu666/simplykb/actions/workflows/ci.yml/badge.svg)](https://github.com/LyleLiu666/simplykb/actions/workflows/ci.yml)
 
-`simplykb` is a slim production-oriented Go knowledge base SDK for text-first recall workloads.
+`simplykb` is an embedded Go SDK for adding hybrid recall to a Go service with one ParadeDB database.
 
-It is built for Go services that want BM25 plus vector recall inside Postgres, without standing up a separate search service, queue, or worker fleet.
+It is built for teams that want BM25 plus vector recall inside Postgres, without standing up a separate search service, queue, or worker fleet.
+
+## North Star
+
+The north star for `simplykb` is simple:
+
+- a Go developer adds a small library to an existing service
+- the team starts one local ParadeDB with Docker for development
+- the service calls `Migrate`, `UpsertDocument`, and `Search`
+- retrieval works without introducing another platform boundary
+
+If `simplykb` feels like "another product to deploy beside my app", the project has drifted.
+
+If it feels like "a small Go SDK with one database dependency", the project is on track.
+
+## What Docker Is For
+
+`simplykb` is not a Docker product.
+It is a Go SDK.
+
+This repository ships Docker Compose because the SDK depends on ParadeDB, and Docker is the lightest way for most developers to get a correct local database with BM25 plus vector support.
+
+In production, your Go application still embeds the SDK directly and connects to a ParadeDB instance you manage.
 
 ## Best Fit
 
@@ -26,23 +48,11 @@ It is built for Go services that want BM25 plus vector recall inside Postgres, w
 - a hosted search product with dashboards and workflow engines
 - a broad RAG framework with many provider-specific features
 
-## Why This Shape
+## Current Shape
 
-This project is optimized for low entropy:
+This repository intentionally targets a narrow but production-usable SDK shape:
 
-- Postgres remains the only durable system
-- ParadeDB gives BM25 inside Postgres
-- `pgvector` gives vector similarity in the same database
-- Go projects embed the SDK directly instead of calling another HTTP service
-
-The goal is not to be the biggest knowledge base system.
-The goal is to be the clearest small one.
-
-## Current Fit
-
-This repository targets a narrow but production-usable shape:
-
-- single database
+- single ParadeDB database
 - single embedding model per deployment
 - embedded SDK, not platform product
 - predictable schema and migration path
@@ -70,9 +80,22 @@ Not supported yet:
 
 Choose another system if you need those capabilities today.
 
+## What Success Looks Like
+
+A healthy first evaluation looks like this:
+
+1. Start ParadeDB locally.
+2. Run the quickstart.
+3. See three `indexed doc-...` lines.
+4. See a `Top hits:` section with at least one result.
+5. Copy the SDK shape into your own Go service and swap `HashEmbedder` for a real embedder.
+
+The goal is not to make you adopt a new platform.
+The goal is to help you add retrieval to a Go codebase with one SDK and one database.
+
 ## Quick Start
 
-### 1. Fastest local smoke run
+### 1. Fastest repo evaluation
 
 ```bash
 make smoke
@@ -84,6 +107,12 @@ This command:
 - waits until the database health check passes
 - runs the quickstart example against the default local URL
 
+If port `25432` is already in use on your machine, override the local ParadeDB port:
+
+```bash
+PARADEDB_PORT=35432 make smoke
+```
+
 ### 2. Manual path
 
 If you want to see each step explicitly:
@@ -94,55 +123,28 @@ make db-status
 go run ./examples/quickstart
 ```
 
-The quickstart example already defaults to:
+The quickstart example defaults to:
 
 ```bash
 postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable
 ```
 
-Set `SIMPLYKB_DATABASE_URL` only if you changed the local port, credentials, or database name.
+The quickstart also reads `PARADEDB_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` when building its local default connection string.
 
-If `25432` is already in use on your machine, choose another port when starting the bundled database:
+Set `SIMPLYKB_DATABASE_URL` only if you want to bypass that local default behavior:
 
 ```bash
 PARADEDB_PORT=35432 make db-up
-SIMPLYKB_DATABASE_URL=postgres://simplykb:simplykb@localhost:35432/simplykb?sslmode=disable \
-go run ./examples/quickstart
+PARADEDB_PORT=35432 go run ./examples/quickstart
 ```
 
 This repository expects ParadeDB, not plain Postgres.
 
-### 3. Run tests
+### 3. Embed It In Your Service
 
-Example output shape:
+`simplykb` is meant to run inside your Go service, not behind another HTTP hop.
 
-```text
-indexed doc-bm25 with 1 chunks
-indexed doc-vector with 1 chunks
-indexed doc-hybrid with 1 chunks
-
-Top hits:
-- doc-bm25 chunk=0 score=...
-  snippet: ...
-```
-
-Success signals:
-
-- you see three `indexed doc-...` lines
-- you see a `Top hits:` section
-- at least one search hit is returned
-- you do not need exact scores or snippet text to match byte-for-byte
-
-```bash
-go test ./...
-make integration-test
-```
-
-Use the integration command whenever a change affects setup, migrations, document normalization, or retrieval behavior.
-
-## Public API
-
-Demo API example:
+The basic integration shape is:
 
 ```go
 databaseURL := os.Getenv("SIMPLYKB_DATABASE_URL")
@@ -188,6 +190,9 @@ for _, hit := range hits {
 }
 ```
 
+The caller injects the `Embedder`.
+That keeps provider choice outside the SDK core.
+
 ## Production Notes
 
 `HashEmbedder` exists for tests, local demos, and zero-cost smoke verification.
@@ -199,6 +204,15 @@ Production deployments should:
 - keep one embedding dimension per deployment
 - avoid changing embedding dimensions against an already-migrated schema
 - treat `simplykb` as a narrow embedded SDK, not a platform boundary
+
+## Run Tests
+
+```bash
+go test ./...
+make integration-test
+```
+
+Use the integration command whenever a change affects setup, migrations, document normalization, or retrieval behavior.
 
 ## Compatibility
 

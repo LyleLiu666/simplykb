@@ -1,9 +1,15 @@
-DB_URL ?= postgres://simplykb:simplykb@localhost:25432/simplykb?sslmode=disable
+POSTGRES_USER ?= simplykb
+POSTGRES_PASSWORD ?= simplykb
+POSTGRES_DB ?= simplykb
+PARADEDB_PORT ?= 25432
+DB_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(PARADEDB_PORT)/$(POSTGRES_DB)?sslmode=disable
 DB_SERVICE ?= paradedb
 DB_WAIT_RETRIES ?= 30
 DB_WAIT_INTERVAL ?= 2
 COMPOSE_PROJECT_NAME ?= simplykb-$(shell printf '%s' "$(CURDIR)" | cksum | awk '{print $$1}')
 COMPOSE = COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME) docker compose
+
+export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB PARADEDB_PORT
 
 .PHONY: test
 test:
