@@ -49,6 +49,7 @@ Run the baseline test suite:
 ```bash
 go test ./...
 go vet ./...
+make verify
 ```
 
 Run integration tests:
@@ -74,6 +75,8 @@ If you changed the local ParadeDB port:
 ```bash
 PARADEDB_PORT=35432 make smoke
 ```
+
+For release work, follow [RELEASING.md](RELEASING.md).
 
 ## When To Add Unit Tests
 

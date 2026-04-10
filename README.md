@@ -193,6 +193,29 @@ for _, hit := range hits {
 The caller injects the `Embedder`.
 That keeps provider choice outside the SDK core.
 
+### 4. Production Example Shape
+
+If you want a real provider-shaped example instead of `HashEmbedder`, see:
+
+- [examples/openai_compatible/main.go](examples/openai_compatible/main.go)
+
+That example keeps provider-specific code outside the SDK core and shows one practical pattern for an OpenAI-compatible embeddings API using environment variables:
+
+- `SIMPLYKB_EMBEDDING_URL`
+- `SIMPLYKB_EMBEDDING_API_KEY`
+- `SIMPLYKB_EMBEDDING_MODEL`
+- `SIMPLYKB_EMBEDDING_DIMENSIONS`
+
+Run it like this after ParadeDB is up:
+
+```bash
+SIMPLYKB_EMBEDDING_URL=https://your-provider.example/v1/embeddings \
+SIMPLYKB_EMBEDDING_API_KEY=... \
+SIMPLYKB_EMBEDDING_MODEL=... \
+SIMPLYKB_EMBEDDING_DIMENSIONS=1536 \
+go run ./examples/openai_compatible
+```
+
 ## Production Notes
 
 `HashEmbedder` exists for tests, local demos, and zero-cost smoke verification.
@@ -210,9 +233,14 @@ Production deployments should:
 ```bash
 go test ./...
 make integration-test
+make verify
 ```
 
 Use the integration command whenever a change affects setup, migrations, document normalization, or retrieval behavior.
+
+`make verify` is the repo-level acceptance command. It covers unit tests, `go vet`, the quickstart smoke path, and integration tests.
+
+Use `make verify` before release work or any public-facing setup change.
 
 ## Compatibility
 

@@ -4,17 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"strings"
 
 	"github.com/LyleLiu666/simplykb"
-)
-
-const (
-	defaultLocalUser = "simplykb"
-	defaultLocalPass = "simplykb"
-	defaultLocalDB   = "simplykb"
-	defaultLocalPort = "25432"
+	"github.com/LyleLiu666/simplykb/examples/internal/exampleenv"
 )
 
 func main() {
@@ -81,27 +73,5 @@ func main() {
 }
 
 func defaultDatabaseURL() string {
-	if databaseURL := strings.TrimSpace(os.Getenv("SIMPLYKB_DATABASE_URL")); databaseURL != "" {
-		return databaseURL
-	}
-
-	user := envOrDefault("POSTGRES_USER", defaultLocalUser)
-	password := envOrDefault("POSTGRES_PASSWORD", defaultLocalPass)
-	database := envOrDefault("POSTGRES_DB", defaultLocalDB)
-	port := envOrDefault("PARADEDB_PORT", defaultLocalPort)
-
-	return fmt.Sprintf(
-		"postgres://%s:%s@localhost:%s/%s?sslmode=disable",
-		user,
-		password,
-		port,
-		database,
-	)
-}
-
-func envOrDefault(key string, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
+	return exampleenv.DefaultDatabaseURL()
 }

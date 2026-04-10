@@ -15,9 +15,20 @@ export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB PARADEDB_PORT
 test:
 	go test ./...
 
+.PHONY: vet
+vet:
+	go vet ./...
+
 .PHONY: integration-test
 integration-test:
-	SIMPLYKB_DATABASE_URL=$(DB_URL) go test ./... -run Integration
+	SIMPLYKB_DATABASE_URL=$(DB_URL) go test ./... -run Integration -count=1 -v
+
+.PHONY: verify
+verify: db-up
+	$(MAKE) test
+	$(MAKE) vet
+	$(MAKE) smoke
+	$(MAKE) integration-test
 
 .PHONY: db-up
 db-up:
