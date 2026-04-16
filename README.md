@@ -65,6 +65,7 @@ Already included:
 - default chunk splitter
 - stable chunk ids
 - hybrid recall with reciprocal rank fusion
+- simple metadata filter support in `Search`
 - local Docker Compose for ParadeDB
 - integration tests
 - quickstart example

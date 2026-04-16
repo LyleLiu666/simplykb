@@ -41,6 +41,7 @@ type SearchRequest struct {
 	Limit          int
 	CandidateLimit int
 	Mode           SearchMode
+	MetadataFilter map[string]any
 }
 
 type SearchHit struct {

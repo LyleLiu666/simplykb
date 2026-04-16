@@ -2,6 +2,7 @@ package simplykb
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 )
@@ -37,6 +38,16 @@ func TestHashEmbedderPreservesSomeSimilarity(t *testing.T) {
 	farScore := cosine(vectors[0], vectors[2])
 	if closeScore <= farScore {
 		t.Fatalf("expected related texts to be closer, got close=%f far=%f", closeScore, farScore)
+	}
+}
+
+func TestHashEmbedderHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewHashEmbedder(64).Embed(ctx, []string{"bm25"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 

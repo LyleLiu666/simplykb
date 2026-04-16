@@ -30,6 +30,27 @@ func TestValidateSearchRequest(t *testing.T) {
 	}
 }
 
+func TestValidateSearchRequestRejectsInvalidMetadataFilter(t *testing.T) {
+	store := &Store{
+		cfg: Config{
+			DefaultCollection:  "default",
+			DefaultSearchLimit: 5,
+			CandidateLimit:     10,
+		}.normalized(),
+	}
+
+	req := store.normalizeSearchRequest(SearchRequest{
+		Query: "bm25",
+		MetadataFilter: map[string]any{
+			"bad": make(chan int),
+		},
+	})
+	err := store.validateSearchRequest(req)
+	if err == nil {
+		t.Fatal("expected invalid metadata filter to fail")
+	}
+}
+
 func TestVectorLiteral(t *testing.T) {
 	got := vectorLiteral([]float32{1, 0.25, 0})
 	if got != "[1,0.25,0]" {

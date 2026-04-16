@@ -299,10 +299,14 @@ func (s *Store) Search(ctx context.Context, req SearchRequest) ([]SearchHit, err
 	if err := s.validateSearchRequest(req); err != nil {
 		return nil, err
 	}
+	filterJSON, err := encodeMetadataFilter(req.MetadataFilter)
+	if err != nil {
+		return nil, err
+	}
 
 	merged := make(map[int64]*SearchHit)
 	if req.Mode == SearchModeHybrid || req.Mode == SearchModeKeyword {
-		keywordHits, err := s.searchKeyword(ctx, req)
+		keywordHits, err := s.searchKeyword(ctx, req, filterJSON)
 		if err != nil {
 			return nil, err
 		}
@@ -323,7 +327,7 @@ func (s *Store) Search(ctx context.Context, req SearchRequest) ([]SearchHit, err
 			return nil, fmt.Errorf("embedder returned %d query vectors", len(queryVector))
 		}
 
-		vectorHits, err := s.searchVector(ctx, req, queryVector[0])
+		vectorHits, err := s.searchVector(ctx, req, queryVector[0], filterJSON)
 		if err != nil {
 			return nil, err
 		}
@@ -362,7 +366,7 @@ func (s *Store) Search(ctx context.Context, req SearchRequest) ([]SearchHit, err
 	return results, nil
 }
 
-func (s *Store) searchKeyword(ctx context.Context, req SearchRequest) ([]candidateHit, error) {
+func (s *Store) searchKeyword(ctx context.Context, req SearchRequest, filterJSON string) ([]candidateHit, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT
     id,
@@ -380,9 +384,10 @@ SELECT
 FROM kb_chunks
 WHERE collection = $1
   AND search_text ||| $2
+  AND metadata @> $4::jsonb
 ORDER BY paradedb.score(id) DESC, id DESC
 LIMIT $3
-`, req.Collection, req.Query, req.CandidateLimit)
+`, req.Collection, req.Query, req.CandidateLimit, filterJSON)
 	if err != nil {
 		return nil, fmt.Errorf("keyword search: %w", err)
 	}
@@ -390,7 +395,7 @@ LIMIT $3
 	return readHits(rows, true)
 }
 
-func (s *Store) searchVector(ctx context.Context, req SearchRequest, vector []float32) ([]candidateHit, error) {
+func (s *Store) searchVector(ctx context.Context, req SearchRequest, vector []float32, filterJSON string) ([]candidateHit, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT
     id,
@@ -407,9 +412,10 @@ SELECT
     (1 - (embedding <=> $2::vector))::double precision AS vector_score
 FROM kb_chunks
 WHERE collection = $1
+  AND metadata @> $3::jsonb
 ORDER BY embedding <=> $2::vector ASC, id DESC
-LIMIT $3
-`, req.Collection, vectorLiteral(vector), req.CandidateLimit)
+LIMIT $4
+`, req.Collection, vectorLiteral(vector), filterJSON, req.CandidateLimit)
 	if err != nil {
 		return nil, fmt.Errorf("vector search: %w", err)
 	}
@@ -508,6 +514,7 @@ func (s *Store) normalizeSearchRequest(req SearchRequest) SearchRequest {
 	if req.Mode == "" {
 		req.Mode = SearchModeHybrid
 	}
+	req.MetadataFilter = normalizeMetadata(req.MetadataFilter)
 	return req
 }
 
@@ -525,6 +532,9 @@ func (s *Store) validateSearchRequest(req SearchRequest) error {
 	}
 	if req.CandidateLimit < req.Limit {
 		return errors.New("candidate limit must be greater than or equal to limit")
+	}
+	if _, err := encodeMetadataFilter(req.MetadataFilter); err != nil {
+		return fmt.Errorf("invalid metadata filter: %w", err)
 	}
 	return nil
 }
@@ -563,6 +573,14 @@ func normalizeMetadata(metadata map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return metadata
+}
+
+func encodeMetadataFilter(metadata map[string]any) (string, error) {
+	bytes, err := json.Marshal(normalizeMetadata(metadata))
+	if err != nil {
+		return "", fmt.Errorf("marshal metadata filter: %w", err)
+	}
+	return string(bytes), nil
 }
 
 func (s *Store) ensureReady() error {

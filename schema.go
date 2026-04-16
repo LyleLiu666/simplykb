@@ -93,5 +93,12 @@ DROP INDEX IF EXISTS kb_documents_collection_idx;
 DROP INDEX IF EXISTS kb_chunks_collection_idx;
 DROP INDEX IF EXISTS kb_chunks_key_idx;`,
 		},
+		{
+			version: 4,
+			name:    "metadata_filter_index",
+			sql: `
+CREATE INDEX IF NOT EXISTS kb_chunks_metadata_idx
+    ON kb_chunks USING gin (metadata jsonb_path_ops);`,
+		},
 	}
 }

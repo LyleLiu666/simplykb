@@ -2,6 +2,7 @@ package simplykb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -58,6 +59,65 @@ func TestIntegrationUpsertAndSearch(t *testing.T) {
 	}
 }
 
+func TestIntegrationSearchFiltersByMetadata(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := integrationDatabaseURL(t)
+	schema := createIntegrationSchema(t, databaseURL)
+	store := newIntegrationStore(t, databaseURL, schema, Config{
+		DefaultCollection:   "integration",
+		EmbeddingDimensions: 256,
+		Embedder:            NewHashEmbedder(256),
+	})
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	for _, req := range []UpsertDocumentRequest{
+		{
+			DocumentID: "doc-alpha",
+			Title:      "Tenant alpha handbook",
+			Content:    "Customer support handbook explains incident response and escalation.",
+			Metadata: map[string]any{
+				"tenant": "alpha",
+				"tier":   "gold",
+			},
+		},
+		{
+			DocumentID: "doc-beta",
+			Title:      "Tenant beta handbook",
+			Content:    "Customer support handbook explains incident response and escalation.",
+			Metadata: map[string]any{
+				"tenant": "beta",
+				"tier":   "silver",
+			},
+		},
+	} {
+		if _, err := store.UpsertDocument(ctx, req); err != nil {
+			t.Fatalf("UpsertDocument(%s) error = %v", req.DocumentID, err)
+		}
+	}
+
+	hits, err := store.Search(ctx, SearchRequest{
+		Query: "incident response handbook",
+		Limit: 5,
+		MetadataFilter: map[string]any{
+			"tenant": "alpha",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("expected at least one filtered hit")
+	}
+	for _, hit := range hits {
+		if hit.DocumentID != "doc-alpha" {
+			t.Fatalf("expected only doc-alpha hits, got %+v", hit)
+		}
+	}
+}
+
 func TestIntegrationMigrateRejectsEmbeddingDimensionDrift(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := integrationDatabaseURL(t)
@@ -111,6 +171,125 @@ func TestIntegrationUpsertRejectsEmptySplitterOutput(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no chunks") {
 		t.Fatalf("expected no chunks error, got %v", err)
+	}
+}
+
+func TestIntegrationUpsertRejectsEmbedderVectorCountMismatch(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := integrationDatabaseURL(t)
+	schema := createIntegrationSchema(t, databaseURL)
+	store := newIntegrationStore(t, databaseURL, schema, Config{
+		DefaultCollection:   "integration",
+		EmbeddingDimensions: 256,
+		Embedder: staticEmbedder{
+			vectors: [][]float32{},
+		},
+	})
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	_, err := store.UpsertDocument(ctx, UpsertDocumentRequest{
+		DocumentID: "doc-1",
+		Title:      "Mismatch",
+		Content:    "embedder count mismatch should fail loudly",
+	})
+	if err == nil {
+		t.Fatal("expected vector count mismatch")
+	}
+	if !strings.Contains(err.Error(), "vectors for") {
+		t.Fatalf("expected vector count mismatch error, got %v", err)
+	}
+}
+
+func TestIntegrationUpsertRejectsEmbedderVectorDimensionMismatch(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := integrationDatabaseURL(t)
+	schema := createIntegrationSchema(t, databaseURL)
+	store := newIntegrationStore(t, databaseURL, schema, Config{
+		DefaultCollection:   "integration",
+		EmbeddingDimensions: 256,
+		Embedder: staticEmbedder{
+			vectors: [][]float32{
+				{1, 0},
+			},
+		},
+	})
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	_, err := store.UpsertDocument(ctx, UpsertDocumentRequest{
+		DocumentID: "doc-1",
+		Title:      "Dimension mismatch",
+		Content:    "embedder dimension mismatch should fail loudly",
+	})
+	if err == nil {
+		t.Fatal("expected vector dimension mismatch")
+	}
+	if !strings.Contains(err.Error(), "dimension mismatch") {
+		t.Fatalf("expected dimension mismatch error, got %v", err)
+	}
+}
+
+func TestIntegrationSearchRejectsQueryEmbedderCountMismatch(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := integrationDatabaseURL(t)
+	schema := createIntegrationSchema(t, databaseURL)
+	store := newIntegrationStore(t, databaseURL, schema, Config{
+		DefaultCollection:   "integration",
+		EmbeddingDimensions: 256,
+		Embedder: staticEmbedder{
+			vectors: [][]float32{
+				makeVector(256, 0),
+				makeVector(256, 1),
+			},
+		},
+	})
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	_, err := store.Search(ctx, SearchRequest{
+		Query: "vector only query",
+		Limit: 1,
+		Mode:  SearchModeVector,
+	})
+	if err == nil {
+		t.Fatal("expected query vector count mismatch")
+	}
+	if !strings.Contains(err.Error(), "query vectors") {
+		t.Fatalf("expected query vector count error, got %v", err)
+	}
+}
+
+func TestIntegrationSearchHonorsCanceledContext(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := integrationDatabaseURL(t)
+	schema := createIntegrationSchema(t, databaseURL)
+	store := newIntegrationStore(t, databaseURL, schema, Config{
+		DefaultCollection:   "integration",
+		EmbeddingDimensions: 256,
+		Embedder:            NewHashEmbedder(256),
+	})
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	_, err := store.Search(canceledCtx, SearchRequest{
+		Query: "anything",
+		Limit: 1,
+		Mode:  SearchModeVector,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
@@ -253,4 +432,30 @@ func databaseURLWithSearchPath(t *testing.T, databaseURL string, schema string) 
 	query.Set("search_path", schema+",public")
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
+}
+
+type staticEmbedder struct {
+	vectors [][]float32
+	err     error
+}
+
+func (e staticEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if e.err != nil {
+		return nil, e.err
+	}
+
+	out := make([][]float32, len(e.vectors))
+	for i, vector := range e.vectors {
+		out[i] = append([]float32(nil), vector...)
+	}
+	return out, nil
+}
+
+func makeVector(dimensions int, hotIndex int) []float32 {
+	vector := make([]float32, dimensions)
+	vector[hotIndex] = 1
+	return vector
 }
