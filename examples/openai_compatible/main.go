@@ -52,6 +52,8 @@ type embeddingItem struct {
 	Embedding []float32 `json:"embedding"`
 }
 
+const maxEmbeddingErrorBodyBytes = 1 << 20
+
 func main() {
 	ctx := context.Background()
 
@@ -188,16 +190,16 @@ func (e *openAICompatibleEmbedder) Embed(ctx context.Context, texts []string) ([
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read embedding response: %w", err)
-	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxEmbeddingErrorBodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("read embedding error response: %w", err)
+		}
 		return nil, fmt.Errorf("embedding api returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
 	}
 
 	var payload embeddingsResponse
-	if err := json.Unmarshal(responseBody, &payload); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode embedding response: %w", err)
 	}
 	if len(payload.Data) != len(texts) {

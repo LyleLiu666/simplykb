@@ -1,7 +1,8 @@
 package exampleenv
 
 import (
-	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -23,13 +24,15 @@ func DefaultDatabaseURL() string {
 	database := StringOrDefault("POSTGRES_DB", defaultLocalDB)
 	port := StringOrDefault("PARADEDB_PORT", defaultLocalPort)
 
-	return fmt.Sprintf(
-		"postgres://%s:%s@localhost:%s/%s?sslmode=disable",
-		user,
-		password,
-		port,
-		database,
-	)
+	connectionURL := &url.URL{
+		Scheme:   "postgres",
+		Host:     net.JoinHostPort("localhost", port),
+		RawQuery: "sslmode=disable",
+		User:     url.UserPassword(user, password),
+	}
+	connectionURL.Path = "/" + database
+	connectionURL.RawPath = "/" + url.PathEscape(database)
+	return connectionURL.String()
 }
 
 func StringOrDefault(key string, fallback string) string {

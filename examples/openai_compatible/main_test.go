@@ -88,6 +88,7 @@ func TestLoadExampleConfigRejectsInvalidNumericEnv(t *testing.T) {
 
 func TestOpenAICompatibleEmbedderEmbed(t *testing.T) {
 	requests := make(chan capturedEmbeddingRequest, 1)
+	handlerErrs := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured := capturedEmbeddingRequest{
 			Method:        r.Method,
@@ -102,9 +103,7 @@ func TestOpenAICompatibleEmbedderEmbed(t *testing.T) {
 				{Index: 0, Embedding: []float32{0.1, 0.2}},
 			},
 		}
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Fatalf("encode response: %v", err)
-		}
+		handlerErrs <- json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -133,6 +132,9 @@ func TestOpenAICompatibleEmbedderEmbed(t *testing.T) {
 	}
 	if captured.Request.Model != "text-embedding" {
 		t.Fatalf("Model = %q", captured.Request.Model)
+	}
+	if err := <-handlerErrs; err != nil {
+		t.Fatalf("encode response: %v", err)
 	}
 	if len(captured.Request.Input) != 2 {
 		t.Fatalf("Input length = %d", len(captured.Request.Input))
@@ -170,4 +172,65 @@ func TestOpenAICompatibleEmbedderValidatesDimensions(t *testing.T) {
 	if !strings.Contains(err.Error(), "dimensions mismatch") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestOpenAICompatibleEmbedderHandlesLargeSuccessfulResponse(t *testing.T) {
+	const (
+		vectorCount = 200
+		dimensions  = 1536
+	)
+	response := makeEmbeddingResponse(vectorCount, dimensions)
+	responseBody, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if len(responseBody) <= 1<<20 {
+		t.Fatalf("response size = %d bytes, want more than 1 MiB", len(responseBody))
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	embedder := &openAICompatibleEmbedder{
+		client:             server.Client(),
+		url:                server.URL,
+		apiKey:             "secret",
+		model:              "text-embedding",
+		expectedDimensions: dimensions,
+	}
+
+	texts := make([]string, vectorCount)
+	for i := range texts {
+		texts[i] = "chunk"
+	}
+
+	got, err := embedder.Embed(context.Background(), texts)
+	if err != nil {
+		t.Fatalf("Embed() error = %v", err)
+	}
+	if len(got) != vectorCount {
+		t.Fatalf("len(got) = %d, want %d", len(got), vectorCount)
+	}
+	if len(got[0]) != dimensions {
+		t.Fatalf("len(got[0]) = %d, want %d", len(got[0]), dimensions)
+	}
+}
+
+func makeEmbeddingResponse(count int, dimensions int) embeddingsResponse {
+	data := make([]embeddingItem, 0, count)
+	for i := 0; i < count; i++ {
+		vector := make([]float32, dimensions)
+		for j := range vector {
+			vector[j] = float32((i+j)%7) / 10
+		}
+		data = append(data, embeddingItem{
+			Index:     i,
+			Embedding: vector,
+		})
+	}
+	return embeddingsResponse{Data: data}
 }

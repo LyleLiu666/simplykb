@@ -2,14 +2,15 @@ POSTGRES_USER ?= simplykb
 POSTGRES_PASSWORD ?= simplykb
 POSTGRES_DB ?= simplykb
 PARADEDB_PORT ?= 25432
-DB_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(PARADEDB_PORT)/$(POSTGRES_DB)?sslmode=disable
+DB_URL ?=
 DB_SERVICE ?= paradedb
 DB_WAIT_RETRIES ?= 30
 DB_WAIT_INTERVAL ?= 2
 COMPOSE_PROJECT_NAME ?= simplykb-$(shell printf '%s' "$(CURDIR)" | cksum | awk '{print $$1}')
 COMPOSE = COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME) docker compose
+RESOLVE_DB_URL = db_url="$${DB_URL:-$$(go run ./examples/internal/exampleenv/cmd/printdburl)}"
 
-export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB PARADEDB_PORT
+export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB PARADEDB_PORT DB_URL
 
 .PHONY: test
 test:
@@ -21,7 +22,11 @@ vet:
 
 .PHONY: integration-test
 integration-test:
-	SIMPLYKB_DATABASE_URL=$(DB_URL) go test ./... -run Integration -count=1 -v
+	$(RESOLVE_DB_URL); SIMPLYKB_DATABASE_URL="$$db_url" go test ./... -run Integration -count=1 -v
+
+.PHONY: print-db-url
+print-db-url:
+	@$(RESOLVE_DB_URL); printf '%s\n' "$$db_url"
 
 .PHONY: verify
 verify: db-up
@@ -65,7 +70,7 @@ db-status:
 
 .PHONY: smoke
 smoke: db-up
-	SIMPLYKB_DATABASE_URL=$(DB_URL) go run ./examples/quickstart
+	$(RESOLVE_DB_URL); SIMPLYKB_DATABASE_URL="$$db_url" go run ./examples/quickstart
 
 .PHONY: quickstart
 quickstart: smoke
