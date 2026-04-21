@@ -11,6 +11,8 @@ The format is simple on purpose:
 
 ## Unreleased
 
+## v0.1.1 - 2026-04-21
+
 ### Added
 
 - A dedicated GitHub Actions integration workflow under `.github/workflows/integration.yml`.
