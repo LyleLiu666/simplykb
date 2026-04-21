@@ -24,6 +24,18 @@ vet:
 integration-test:
 	$(RESOLVE_DB_URL); SIMPLYKB_DATABASE_URL="$$db_url" go test ./... -run Integration -count=1 -v
 
+.PHONY: doctor
+doctor:
+	$(RESOLVE_DB_URL); SIMPLYKB_DATABASE_URL="$$db_url" go run ./examples/internal/exampleenv/cmd/doctor
+
+.PHONY: benchmark
+benchmark:
+	go test ./... -run '^$$' -bench '^(BenchmarkHashEmbedderMediumDocument|BenchmarkDefaultSplitterMediumDocument)$$' -benchmem -count=1
+
+.PHONY: integration-benchmark
+integration-benchmark: db-up
+	$(RESOLVE_DB_URL); SIMPLYKB_DATABASE_URL="$$db_url" go test ./... -run '^$$' -bench '^BenchmarkIntegration' -benchmem -benchtime=3x -count=1
+
 .PHONY: print-db-url
 print-db-url:
 	@$(RESOLVE_DB_URL); printf '%s\n' "$$db_url"
@@ -33,6 +45,7 @@ verify: db-up
 	$(MAKE) test
 	$(MAKE) vet
 	$(MAKE) smoke
+	$(MAKE) doctor
 	$(MAKE) integration-test
 
 .PHONY: db-up

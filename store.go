@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/LyleLiu666/simplykb/internal/sdkmeta"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -84,6 +85,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		_ = tx.Rollback(ctx)
 	}()
 
+	if err := ensureRequiredExtensions(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(73120410)); err != nil {
 		return fmt.Errorf("acquire migration lock: %w", err)
 	}
@@ -655,4 +659,47 @@ func parseVectorDimensions(typeName string) (int, error) {
 		return 0, fmt.Errorf("embedding dimensions must be greater than 0, got %d", dimensions)
 	}
 	return dimensions, nil
+}
+
+func ensureRequiredExtensions(ctx context.Context, tx pgx.Tx) error {
+	requiredExtensions := sdkmeta.RequiredExtensionNames()
+	rows, err := tx.Query(ctx, `
+SELECT name
+FROM pg_catalog.pg_available_extensions
+WHERE name = ANY($1)
+`, requiredExtensions)
+	if err != nil {
+		return fmt.Errorf("load required extension support: %w", err)
+	}
+	defer rows.Close()
+
+	available := make(map[string]struct{}, 2)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan required extension support: %w", err)
+		}
+		available[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate required extension support: %w", err)
+	}
+	return validateRequiredExtensions(available)
+}
+
+func validateRequiredExtensions(available map[string]struct{}) error {
+	var missing []string
+	for _, name := range sdkmeta.RequiredExtensionNames() {
+		if _, ok := available[name]; ok {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"database is missing required extension support for %s; simplykb expects ParadeDB with pgvector support, not plain Postgres",
+		strings.Join(missing, ", "),
+	)
 }

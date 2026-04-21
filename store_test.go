@@ -1,6 +1,9 @@
 package simplykb
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestConfigValidate(t *testing.T) {
 	cfg := Config{
@@ -55,5 +58,30 @@ func TestVectorLiteral(t *testing.T) {
 	got := vectorLiteral([]float32{1, 0.25, 0})
 	if got != "[1,0.25,0]" {
 		t.Fatalf("unexpected vector literal: %s", got)
+	}
+}
+
+func TestValidateRequiredExtensions(t *testing.T) {
+	err := validateRequiredExtensions(map[string]struct{}{
+		"vector": {},
+	})
+	if err == nil {
+		t.Fatal("expected missing extension error")
+	}
+	if !strings.Contains(err.Error(), "plain Postgres") {
+		t.Fatalf("expected plain Postgres guidance, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "pg_search") {
+		t.Fatalf("expected missing extension name, got %v", err)
+	}
+}
+
+func TestValidateRequiredExtensionsAcceptsRequiredSet(t *testing.T) {
+	err := validateRequiredExtensions(map[string]struct{}{
+		"pg_search": {},
+		"vector":    {},
+	})
+	if err != nil {
+		t.Fatalf("expected required extensions to pass, got %v", err)
 	}
 }

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting Guide
+    url: https://github.com/LyleLiu666/simplykb/blob/main/docs/troubleshooting.md
+    about: Check common setup and runtime fixes before opening a new issue.
+  - name: Scope And Contribution Guide
+    url: https://github.com/LyleLiu666/simplykb/blob/main/CONTRIBUTING.md
+    about: Read project scope and contribution guardrails before proposing larger changes.

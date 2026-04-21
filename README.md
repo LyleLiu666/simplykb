@@ -1,6 +1,8 @@
 # simplykb
 
 [![CI](https://github.com/LyleLiu666/simplykb/actions/workflows/ci.yml/badge.svg)](https://github.com/LyleLiu666/simplykb/actions/workflows/ci.yml)
+[![Integration](https://github.com/LyleLiu666/simplykb/actions/workflows/integration.yml/badge.svg)](https://github.com/LyleLiu666/simplykb/actions/workflows/integration.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 `simplykb` is an embedded Go SDK for adding hybrid recall to a Go service with one ParadeDB database.
 
@@ -61,13 +63,16 @@ This repository intentionally targets a narrow but production-usable SDK shape:
 Already included:
 
 - versioned schema migration with advisory lock
+- legacy-schema upgrade regression coverage in integration tests
 - document upsert and delete
 - default chunk splitter
 - stable chunk ids
 - hybrid recall with reciprocal rank fusion
 - simple metadata filter support in `Search`
 - local Docker Compose for ParadeDB
-- integration tests
+- integration tests, including a provider-shaped OpenAI-compatible path
+- `make doctor` runtime diagnostics for database, extensions, schema, and counts
+- reproducible `make benchmark` and `make integration-benchmark` baselines
 - quickstart example
 
 Not supported yet:
@@ -107,6 +112,25 @@ This command:
 - starts the bundled ParadeDB database
 - waits until the database health check passes
 - runs the quickstart example against the default local URL
+
+Example output shape:
+
+```text
+indexed doc-bm25 with 1 chunks
+indexed doc-vector with 1 chunks
+indexed doc-hybrid with 1 chunks
+
+Top hits:
+- doc-bm25 chunk=0 score=...
+```
+
+Treat that block as an example shape, not an exact byte-for-byte expectation.
+The stable success signals are:
+
+- three successful `indexed doc-...` lines
+- a `Top hits:` section
+- at least one non-empty hit result
+- no requirement to match exact scores or snippet text byte-for-byte
 
 If port `25432` is already in use on your machine, override the local ParadeDB port:
 
@@ -217,6 +241,8 @@ SIMPLYKB_EMBEDDING_DIMENSIONS=1536 \
 go run ./examples/openai_compatible
 ```
 
+That example shape is also exercised by an integration test against a real ParadeDB schema and a mock OpenAI-compatible embeddings endpoint, so it is not just documentation-only.
+
 ## Production Notes
 
 `HashEmbedder` exists for tests, local demos, and zero-cost smoke verification.
@@ -229,6 +255,32 @@ Production deployments should:
 - avoid changing embedding dimensions against an already-migrated schema
 - treat `simplykb` as a narrow embedded SDK, not a platform boundary
 
+## Operator Checks
+
+When setup, migration, or retrieval behavior looks suspicious, start with:
+
+```bash
+make doctor
+```
+
+`make doctor` inspects the database URL you configured. It does not automatically start ParadeDB for you.
+
+This command prints:
+
+- the redacted database URL it connected to
+- current database, schema, and search path
+- whether `pg_search` and `vector` support are available
+- whether the migrations table exists, which versions are applied, and what the current expected version is
+- the current embedding column type
+- current document and chunk counts
+
+If you changed the local ParadeDB port:
+
+```bash
+PARADEDB_PORT=35432 make db-up
+PARADEDB_PORT=35432 make doctor
+```
+
 ## Run Tests
 
 ```bash
@@ -239,9 +291,32 @@ make verify
 
 Use the integration command whenever a change affects setup, migrations, document normalization, or retrieval behavior.
 
-`make verify` is the repo-level acceptance command. It covers unit tests, `go vet`, the quickstart smoke path, and integration tests.
+Integration coverage now includes:
+
+- legacy schema upgrade regression
+- a fresh external Go module consumer check
+- a provider-shaped OpenAI-compatible embedder path against a real ParadeDB database
+
+`make verify` is the repo-level acceptance command. It covers unit tests, `go vet`, the quickstart smoke path, `make doctor`, and integration tests.
 
 Use `make verify` before release work or any public-facing setup change.
+
+## Benchmarks
+
+Capacity notes in this README are design targets, not universal throughput promises.
+
+Use these commands when you want a reproducible local baseline:
+
+```bash
+make benchmark
+make integration-benchmark
+```
+
+`make benchmark` exercises the built-in hash embedder and default splitter.
+
+`make integration-benchmark` exercises real ParadeDB-backed upsert and hybrid search against the local database.
+
+Treat the output as a comparison baseline across commits or machines, not as a guaranteed production SLA.
 
 ## Compatibility
 
@@ -265,12 +340,23 @@ The most common ones are:
 - database not reachable
 - using plain Postgres instead of ParadeDB
 - embedding dimension mismatch after changing config
+- uncertainty about current schema, extension support, or migration state
 - searches returning no hits because data was never indexed into the expected collection
 - integration tests being skipped because `SIMPLYKB_DATABASE_URL` is not set
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, test expectations, and scope guardrails.
+
+## Support
+
+Before opening a new issue:
+
+- check [docs/troubleshooting.md](docs/troubleshooting.md) for common setup and runtime fixes
+- use the bug report or feature request template so the issue has the right reproduction and scope details
+- treat platform-style expansion requests as design discussions, not default roadmap items
+
+If you are reporting a regression in setup, migrations, or retrieval behavior, include the exact verification you ran.
 
 ## Data Envelope
 

@@ -3,13 +3,11 @@ package simplykb
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/url"
-	"os"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/LyleLiu666/simplykb/internal/testdb"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -143,6 +141,67 @@ func TestIntegrationMigrateRejectsEmbeddingDimensionDrift(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "embedding dimension") {
 		t.Fatalf("expected embedding dimension error, got %v", err)
+	}
+}
+
+func TestIntegrationMigrateUpgradesOlderSchemaWithoutLosingData(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := integrationDatabaseURL(t)
+	schema := createIntegrationSchema(t, databaseURL)
+	seedLegacyIntegrationSchema(t, databaseURL, schema, 256, 2)
+
+	store := newIntegrationStore(t, databaseURL, schema, Config{
+		DefaultCollection:   "integration",
+		EmbeddingDimensions: 256,
+		Embedder:            NewHashEmbedder(256),
+	})
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	gotVersions := appliedMigrationVersions(t, ctx, store.pool)
+	wantVersions := []int64{1, 2, 3, 4}
+	if !slices.Equal(gotVersions, wantVersions) {
+		t.Fatalf("migration versions = %v, want %v", gotVersions, wantVersions)
+	}
+
+	hits, err := store.Search(ctx, SearchRequest{
+		Query: "upgrade regression",
+		Limit: 3,
+		Mode:  SearchModeKeyword,
+		MetadataFilter: map[string]any{
+			"tenant": "legacy",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("expected migrated legacy document to remain searchable")
+	}
+	if hits[0].DocumentID != "legacy-doc" {
+		t.Fatalf("unexpected migrated top hit: %+v", hits[0])
+	}
+
+	if _, err := store.UpsertDocument(ctx, UpsertDocumentRequest{
+		DocumentID: "fresh-doc",
+		Title:      "Fresh document",
+		Content:    "New writes should still work after upgrading the schema.",
+	}); err != nil {
+		t.Fatalf("UpsertDocument() after upgrade error = %v", err)
+	}
+
+	var documentCount int
+	if err := store.pool.QueryRow(ctx, `
+SELECT count(*)
+FROM kb_documents
+WHERE collection = $1
+`, "integration").Scan(&documentCount); err != nil {
+		t.Fatalf("count documents after upgrade: %v", err)
+	}
+	if documentCount != 2 {
+		t.Fatalf("document count = %d, want 2", documentCount)
 	}
 }
 
@@ -370,42 +429,11 @@ func (emptySplitter) Split(text string) ([]ChunkDraft, error) {
 }
 
 func integrationDatabaseURL(t *testing.T) string {
-	t.Helper()
-
-	databaseURL := os.Getenv("SIMPLYKB_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("SIMPLYKB_DATABASE_URL is not set")
-	}
-	return databaseURL
+	return testdb.DatabaseURL(t)
 }
 
 func createIntegrationSchema(t *testing.T, databaseURL string) string {
-	t.Helper()
-
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("connect admin pool: %v", err)
-	}
-	defer pool.Close()
-
-	schema := fmt.Sprintf("simplykb_test_%d", time.Now().UnixNano())
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatalf("create schema %s: %v", schema, err)
-	}
-
-	t.Cleanup(func() {
-		cleanupPool, err := pgxpool.New(ctx, databaseURL)
-		if err != nil {
-			t.Fatalf("connect cleanup pool: %v", err)
-		}
-		defer cleanupPool.Close()
-		if _, err := cleanupPool.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Fatalf("drop schema %s: %v", schema, err)
-		}
-	})
-
-	return schema
+	return testdb.CreateSchema(t, databaseURL, "simplykb_test")
 }
 
 func newIntegrationStore(t *testing.T, databaseURL string, schema string, cfg Config) *Store {
@@ -421,17 +449,104 @@ func newIntegrationStore(t *testing.T, databaseURL string, schema string, cfg Co
 	return store
 }
 
-func databaseURLWithSearchPath(t *testing.T, databaseURL string, schema string) string {
+func seedLegacyIntegrationSchema(t *testing.T, databaseURL string, schema string, dimensions int, lastVersion int64) {
 	t.Helper()
 
-	parsed, err := url.Parse(databaseURL)
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURLWithSearchPath(t, databaseURL, schema))
 	if err != nil {
-		t.Fatalf("parse database url: %v", err)
+		t.Fatalf("connect legacy pool: %v", err)
 	}
-	query := parsed.Query()
-	query.Set("search_path", schema+",public")
-	parsed.RawQuery = query.Encode()
-	return parsed.String()
+	defer pool.Close()
+
+	if _, err := pool.Exec(ctx, bootstrapMigrationSQL()); err != nil {
+		t.Fatalf("bootstrap legacy migrations table: %v", err)
+	}
+
+	for _, migration := range schemaMigrations(dimensions) {
+		if migration.version > lastVersion {
+			break
+		}
+		if _, err := pool.Exec(ctx, migration.sql); err != nil {
+			t.Fatalf("apply legacy migration %d (%s): %v", migration.version, migration.name, err)
+		}
+		if _, err := pool.Exec(ctx, `
+INSERT INTO kb_schema_migrations (version, name)
+VALUES ($1, $2)
+`, migration.version, migration.name); err != nil {
+			t.Fatalf("record legacy migration %d (%s): %v", migration.version, migration.name, err)
+		}
+	}
+
+	const legacyContent = "Legacy upgrade regression content stays searchable after migrations."
+	const legacyMetadata = `{"tenant":"legacy"}`
+
+	var internalDocumentID int64
+	err = pool.QueryRow(ctx, `
+INSERT INTO kb_documents (
+    collection,
+    external_id,
+    title,
+    source_uri,
+    tags,
+    metadata,
+    content_hash,
+    chunk_count
+) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+RETURNING id
+`, "integration", "legacy-doc", "Legacy document", "", []string{"legacy"}, legacyMetadata, hashText(legacyContent), 1).Scan(&internalDocumentID)
+	if err != nil {
+		t.Fatalf("insert legacy document: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+INSERT INTO kb_chunks (
+    collection,
+    document_id,
+    document_external_id,
+    chunk_key,
+    chunk_no,
+    title,
+    content,
+    source_uri,
+    tags,
+    metadata,
+    embedding
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::vector)
+`, "integration", internalDocumentID, "legacy-doc", chunkKey("legacy-doc", 0), 0, "Legacy document", legacyContent, "", []string{"legacy"}, legacyMetadata, vectorLiteral(makeVector(dimensions, 0))); err != nil {
+		t.Fatalf("insert legacy chunk: %v", err)
+	}
+}
+
+func appliedMigrationVersions(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []int64 {
+	t.Helper()
+
+	rows, err := pool.Query(ctx, `
+SELECT version
+FROM kb_schema_migrations
+ORDER BY version
+`)
+	if err != nil {
+		t.Fatalf("query migration versions: %v", err)
+	}
+	defer rows.Close()
+
+	var versions []int64
+	for rows.Next() {
+		var version int64
+		if err := rows.Scan(&version); err != nil {
+			t.Fatalf("scan migration version: %v", err)
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migration versions: %v", err)
+	}
+	return versions
+}
+
+func databaseURLWithSearchPath(t *testing.T, databaseURL string, schema string) string {
+	return testdb.URLWithSearchPath(t, databaseURL, schema)
 }
 
 type staticEmbedder struct {

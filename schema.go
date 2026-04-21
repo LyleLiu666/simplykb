@@ -1,6 +1,10 @@
 package simplykb
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/LyleLiu666/simplykb/internal/sdkmeta"
+)
 
 type migration struct {
 	version int64
@@ -20,7 +24,7 @@ CREATE TABLE IF NOT EXISTS kb_schema_migrations (
 func schemaMigrations(dimensions int) []migration {
 	return []migration{
 		{
-			version: 1,
+			version: sdkmeta.MigrationVersionBaseTables,
 			name:    "base_tables",
 			sql: fmt.Sprintf(`
 CREATE EXTENSION IF NOT EXISTS pg_search;
@@ -62,7 +66,7 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
 );`, dimensions),
 		},
 		{
-			version: 2,
+			version: sdkmeta.MigrationVersionIndexes,
 			name:    "indexes",
 			sql: `
 CREATE INDEX IF NOT EXISTS kb_chunks_embedding_idx
@@ -86,7 +90,7 @@ BEGIN
 END $$;`,
 		},
 		{
-			version: 3,
+			version: sdkmeta.MigrationVersionDropRedundantIndex,
 			name:    "drop_redundant_indexes",
 			sql: `
 DROP INDEX IF EXISTS kb_documents_collection_idx;
@@ -94,7 +98,7 @@ DROP INDEX IF EXISTS kb_chunks_collection_idx;
 DROP INDEX IF EXISTS kb_chunks_key_idx;`,
 		},
 		{
-			version: 4,
+			version: sdkmeta.MigrationVersionMetadataFilterIndex,
 			name:    "metadata_filter_index",
 			sql: `
 CREATE INDEX IF NOT EXISTS kb_chunks_metadata_idx

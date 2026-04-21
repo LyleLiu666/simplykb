@@ -48,14 +48,30 @@ func TestMakePrintDBURLPreservesDollarSignsInExplicitDBURL(t *testing.T) {
 	}
 }
 
+func TestMakeDoctorDoesNotStartDatabase(t *testing.T) {
+	got := makeCommandOutput(t, []string{"-n", "doctor"})
+	if strings.Contains(got, "docker compose up -d") {
+		t.Fatalf("make doctor should not bootstrap Docker in dry-run output\n%s", got)
+	}
+	if !strings.Contains(got, "go run ./examples/internal/exampleenv/cmd/doctor") {
+		t.Fatalf("make doctor dry-run should invoke the doctor command\n%s", got)
+	}
+}
+
 func makeTargetOutput(t *testing.T, target string, env ...string) string {
 	t.Helper()
 
-	cmd := exec.Command("make", target)
+	return makeCommandOutput(t, []string{target}, env...)
+}
+
+func makeCommandOutput(t *testing.T, args []string, env ...string) string {
+	t.Helper()
+
+	cmd := exec.Command("make", args...)
 	cmd.Env = append(os.Environ(), env...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("make %s error = %v\n%s", target, err, output)
+		t.Fatalf("make %s error = %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return string(output)
 }
