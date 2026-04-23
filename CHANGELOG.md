@@ -9,6 +9,30 @@ The format is simple on purpose:
 - Fixed
 - Docs
 
+## v0.2.1 - 2026-04-23
+
+### Added
+
+- `examples/ingest_dir` as a recursive local directory ingestion example that defaults to hash embeddings and can switch to an OpenAI-compatible embeddings API through environment variables.
+- `examples/internal/exampleembed` as a shared example-only embedder helper so local and provider-backed example flows reuse the same configuration and validation path.
+
+### Changed
+
+- `examples/openai_compatible` now reuses the shared example embedder helper instead of carrying a separate copy of the OpenAI-compatible embedding client.
+- The OpenAI-compatible example loader now rejects conflicting `SIMPLYKB_EMBEDDER_PROVIDER` overrides instead of silently drifting to another embedder.
+- Directory ingestion now skips empty or non-UTF-8 files by default and supports `SIMPLYKB_INGEST_STRICT=true` for fail-fast runs.
+- Completed planning material now lives under `docs/plans/archive/` so active guidance stays separate from historical design notes.
+
+### Fixed
+
+- The documented `examples/openai_compatible` command is now self-contained even when `SIMPLYKB_EMBEDDER_PROVIDER` is already set in the shell.
+- `examples/ingest_dir` now emits valid `file://` source URIs for Windows drive paths and UNC paths without corrupting legitimate Unix file names that contain a backslash character.
+
+### Docs
+
+- README now states which capabilities intentionally stay outside the core SDK and points readers to the new local directory ingestion example.
+- The docs index now links directly to the archived plan index instead of keeping a separate active-plan shim after the current planning work was completed.
+
 ## v0.2.0 - 2026-04-23
 
 ### Added
