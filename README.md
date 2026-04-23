@@ -44,9 +44,9 @@ In production, your Go application still embeds the SDK directly and connects to
 
 `simplykb` is probably not the right tool if you need:
 
-- PDF parsing, OCR, or a document ingestion platform
+- built-in PDF parsing, OCR, or a document ingestion platform inside the SDK
 - multi-tenant auth or ACL logic inside the SDK
-- distributed writes or a large async indexing pipeline
+- distributed writes or a large async indexing pipeline inside the SDK
 - a hosted search product with dashboards and workflow engines
 - a broad RAG framework with many provider-specific features
 
@@ -80,16 +80,23 @@ Already included:
 - reproducible `make benchmark` and `make integration-benchmark` baselines
 - quickstart example
 
-Not supported yet:
+## What Stays Outside The Core SDK
 
-- PDF parsing
-- async ingestion pipeline
-- ACL and multi-tenant auth
-- reranker
-- dashboard
-- distributed write path
+Some capabilities are reasonable parts of a system built with `simplykb`, but they intentionally stay outside this core package.
 
-Choose another system if you need those capabilities today.
+Use adjacent application code or services for:
+
+- PDF parsing or OCR before calling `UpsertDocument`
+- async queue, worker, or cron flows that call `UpsertDocument` or `ReindexDocument`
+- reranking after `Search` when your workload proves the extra latency and cost are worth it
+
+Treat the following as out of scope for the core SDK unless the product definition changes:
+
+- ACL and multi-tenant policy enforcement inside the SDK
+- dashboard or workflow-product surfaces
+- distributed write paths
+
+If you need those as built-in core features, choose another system or add them as a separate layer above `simplykb`.
 
 ## What Success Looks Like
 
@@ -234,7 +241,7 @@ If you want a real provider-shaped example instead of `HashEmbedder`, see:
 That example keeps provider-specific code outside the SDK core and shows one practical pattern for an OpenAI-compatible embeddings API using environment variables:
 
 - `SIMPLYKB_EMBEDDING_URL`
-- `SIMPLYKB_EMBEDDING_API_KEY`
+- `SIMPLYKB_EMBEDDING_API_KEY` when your provider requires bearer auth
 - `SIMPLYKB_EMBEDDING_MODEL`
 - `SIMPLYKB_EMBEDDING_DIMENSIONS`
 
@@ -242,13 +249,48 @@ Run it like this after ParadeDB is up:
 
 ```bash
 SIMPLYKB_EMBEDDING_URL=https://your-provider.example/v1/embeddings \
-SIMPLYKB_EMBEDDING_API_KEY=... \
 SIMPLYKB_EMBEDDING_MODEL=... \
 SIMPLYKB_EMBEDDING_DIMENSIONS=1536 \
 go run ./examples/openai_compatible
 ```
 
+If your provider requires auth, also set `SIMPLYKB_EMBEDDING_API_KEY`.
+
 That example shape is also exercised by an integration test against a real ParadeDB schema and a mock OpenAI-compatible embeddings endpoint, so it is not just documentation-only.
+
+### 5. Local Directory Ingestion Example
+
+If you want a small ingestion entrypoint without committing to one embedding provider up front, see:
+
+- [examples/ingest_dir/main.go](examples/ingest_dir/main.go)
+
+That example:
+
+- walks a local directory recursively
+- ingests common text-like files such as `.md`, `.txt`, `.json`, `.yaml`, and `.html`
+- uses `hash` embeddings by default, so it can run without any external embedding API
+- can switch to an OpenAI-compatible embeddings endpoint later through environment variables instead of code changes
+- skips empty or non-UTF-8 files by default, and can fail fast with `SIMPLYKB_INGEST_STRICT=true`
+
+Hash-only local run:
+
+```bash
+SIMPLYKB_SOURCE_DIR=./docs \
+go run ./examples/ingest_dir
+```
+
+Switch to an OpenAI-compatible embeddings API when you have one:
+
+```bash
+SIMPLYKB_SOURCE_DIR=./docs \
+SIMPLYKB_EMBEDDER_PROVIDER=openai_compatible \
+SIMPLYKB_EMBEDDING_URL=https://your-provider.example/v1/embeddings \
+SIMPLYKB_EMBEDDING_MODEL=... \
+SIMPLYKB_EMBEDDING_DIMENSIONS=1536 \
+go run ./examples/ingest_dir
+```
+
+Add `SIMPLYKB_EMBEDDING_API_KEY` too if that endpoint requires bearer auth.
 
 ## Production Notes
 

@@ -5,7 +5,7 @@
 This branch keeps completed or superseded design and planning documents that still have reference value, but no longer guide the next implementation step.
 
 If you want the current SDK contract, start with [README.md](../../../README.md).
-If you want the plan-history index for this branch, use [../README.md](../README.md).
+This file is the plan-history index for this branch.
 
 Archived files preserve the language and repo assumptions from the time they were written.
 Future-tense wording inside them should be read as historical context, not as current guidance.

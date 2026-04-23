@@ -115,9 +115,11 @@ Changes are usually welcome when they:
 
 Changes should be discussed before implementation when they add:
 
+- built-in PDF or OCR ingestion
 - new platform layers
 - tenant auth or ACL logic
 - queues or workers
+- reranking in the default search path
 - dashboards
 - raw query DSLs
 - broad provider-specific abstractions

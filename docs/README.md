@@ -2,7 +2,7 @@
 
 This branch keeps the current reading path short.
 Start with the current product contract, then move into the task-specific docs you need.
-Historical plans live under [plans/README.md](./plans/README.md) so old design notes do not quietly masquerade as current guidance.
+Historical plans live under [plans/archive/README.md](./plans/archive/README.md) so old design notes do not quietly masquerade as current guidance.
 
 ## Reading Path
 
@@ -24,7 +24,7 @@ Historical plans live under [plans/README.md](./plans/README.md) so old design n
 
 ## Historical Design Material
 
-- [plans/README.md](./plans/README.md)
+- [plans/archive/README.md](./plans/archive/README.md)
   Role: `index`
   Use it only when you need design history, archived execution notes, or rationale that is already reflected in the current docs and code.
 

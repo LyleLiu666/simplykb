@@ -1,58 +1,20 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"os"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/LyleLiu666/simplykb"
+	"github.com/LyleLiu666/simplykb/examples/internal/exampleembed"
 	"github.com/LyleLiu666/simplykb/examples/internal/exampleenv"
 )
 
 type exampleConfig struct {
-	DatabaseURL         string
-	Collection          string
-	EmbeddingURL        string
-	EmbeddingAPIKey     string
-	EmbeddingModel      string
-	EmbeddingDimensions int
-	Timeout             time.Duration
+	DatabaseURL    string
+	Collection     string
+	EmbedderConfig exampleembed.Config
 }
-
-type openAICompatibleEmbedder struct {
-	client             *http.Client
-	url                string
-	apiKey             string
-	model              string
-	expectedDimensions int
-}
-
-type embeddingsRequest struct {
-	Model          string   `json:"model"`
-	Input          []string `json:"input"`
-	EncodingFormat string   `json:"encoding_format,omitempty"`
-}
-
-type embeddingsResponse struct {
-	Data []embeddingItem `json:"data"`
-}
-
-type embeddingItem struct {
-	Index     int       `json:"index"`
-	Embedding []float32 `json:"embedding"`
-}
-
-const maxEmbeddingErrorBodyBytes = 1 << 20
 
 func main() {
 	ctx := context.Background()
@@ -61,20 +23,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	embedder, err := cfg.EmbedderConfig.NewEmbedder()
+	if err != nil {
+		log.Fatalf("create embedder: %v", err)
+	}
 
 	store, err := simplykb.New(ctx, simplykb.Config{
 		DatabaseURL:         cfg.DatabaseURL,
 		DefaultCollection:   cfg.Collection,
-		EmbeddingDimensions: cfg.EmbeddingDimensions,
-		Embedder: &openAICompatibleEmbedder{
-			client: &http.Client{
-				Timeout: cfg.Timeout,
-			},
-			url:                cfg.EmbeddingURL,
-			apiKey:             cfg.EmbeddingAPIKey,
-			model:              cfg.EmbeddingModel,
-			expectedDimensions: cfg.EmbeddingDimensions,
-		},
+		EmbeddingDimensions: cfg.EmbedderConfig.Dimensions,
+		Embedder:            embedder,
 	})
 	if err != nil {
 		log.Fatalf("create store: %v", err)
@@ -124,128 +82,18 @@ func main() {
 }
 
 func loadExampleConfig() (exampleConfig, error) {
-	dimensions, err := intEnvOrDefault("SIMPLYKB_EMBEDDING_DIMENSIONS", 0)
-	if err != nil {
-		return exampleConfig{}, err
-	}
-	timeoutSeconds, err := intEnvOrDefault("SIMPLYKB_EMBEDDING_TIMEOUT_SECONDS", 30)
+	embedderConfig, err := exampleembed.LoadOpenAICompatibleConfigFromEnv()
 	if err != nil {
 		return exampleConfig{}, err
 	}
 
-	cfg := exampleConfig{
-		DatabaseURL:         defaultDatabaseURL(),
-		Collection:          exampleenv.StringOrDefault("SIMPLYKB_COLLECTION", "demo"),
-		EmbeddingURL:        strings.TrimSpace(os.Getenv("SIMPLYKB_EMBEDDING_URL")),
-		EmbeddingAPIKey:     strings.TrimSpace(os.Getenv("SIMPLYKB_EMBEDDING_API_KEY")),
-		EmbeddingModel:      strings.TrimSpace(os.Getenv("SIMPLYKB_EMBEDDING_MODEL")),
-		EmbeddingDimensions: dimensions,
-		Timeout:             time.Duration(timeoutSeconds) * time.Second,
-	}
-
-	switch {
-	case cfg.EmbeddingURL == "":
-		return exampleConfig{}, errors.New("SIMPLYKB_EMBEDDING_URL is required")
-	case cfg.EmbeddingAPIKey == "":
-		return exampleConfig{}, errors.New("SIMPLYKB_EMBEDDING_API_KEY is required")
-	case cfg.EmbeddingModel == "":
-		return exampleConfig{}, errors.New("SIMPLYKB_EMBEDDING_MODEL is required")
-	case cfg.EmbeddingDimensions <= 0:
-		return exampleConfig{}, errors.New("SIMPLYKB_EMBEDDING_DIMENSIONS must be greater than 0")
-	}
-
-	return cfg, nil
-}
-
-func (e *openAICompatibleEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if e == nil {
-		return nil, errors.New("embedder is nil")
-	}
-	if len(texts) == 0 {
-		return [][]float32{}, nil
-	}
-
-	body, err := json.Marshal(embeddingsRequest{
-		Model:          e.model,
-		Input:          texts,
-		EncodingFormat: "float",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal embedding request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build embedding request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+e.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := e.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call embedding api: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxEmbeddingErrorBodyBytes))
-		if err != nil {
-			return nil, fmt.Errorf("read embedding error response: %w", err)
-		}
-		return nil, fmt.Errorf("embedding api returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
-	}
-
-	var payload embeddingsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode embedding response: %w", err)
-	}
-	if len(payload.Data) != len(texts) {
-		return nil, fmt.Errorf("embedding api returned %d vectors for %d texts", len(payload.Data), len(texts))
-	}
-
-	sort.Slice(payload.Data, func(i, j int) bool {
-		return payload.Data[i].Index < payload.Data[j].Index
-	})
-
-	out := make([][]float32, 0, len(payload.Data))
-	for i, item := range payload.Data {
-		if item.Index != i {
-			return nil, fmt.Errorf("embedding api returned unexpected index %d at position %d", item.Index, i)
-		}
-		if len(item.Embedding) != e.expectedDimensions {
-			return nil, fmt.Errorf("embedding dimensions mismatch: got %d want %d", len(item.Embedding), e.expectedDimensions)
-		}
-		out = append(out, item.Embedding)
-	}
-
-	return out, nil
-}
-
-func (e *openAICompatibleEmbedder) QueryEmbeddingCacheKey(ctx context.Context, normalizedQuery string) (string, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return "", false, err
-	}
-	return normalizedQuery, true, nil
+	return exampleConfig{
+		DatabaseURL:    defaultDatabaseURL(),
+		Collection:     exampleenv.StringOrDefault("SIMPLYKB_COLLECTION", "demo"),
+		EmbedderConfig: embedderConfig,
+	}, nil
 }
 
 func defaultDatabaseURL() string {
 	return exampleenv.DefaultDatabaseURL()
-}
-
-func intEnvOrDefault(key string, fallback int) (int, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-	}
-	if value <= 0 {
-		return 0, fmt.Errorf("%s must be greater than 0", key)
-	}
-	return value, nil
 }

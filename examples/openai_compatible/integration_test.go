@@ -10,8 +10,22 @@ import (
 	"time"
 
 	"github.com/LyleLiu666/simplykb"
+	"github.com/LyleLiu666/simplykb/examples/internal/exampleembed"
 	"github.com/LyleLiu666/simplykb/internal/testdb"
 )
+
+type capturedEmbeddingRequest struct {
+	Method        string
+	Authorization string
+	Request       capturedEmbeddingPayload
+	DecodeErr     error
+}
+
+type capturedEmbeddingPayload struct {
+	Model          string   `json:"model"`
+	Input          []string `json:"input"`
+	EncodingFormat string   `json:"encoding_format,omitempty"`
+}
 
 func TestIntegrationOpenAICompatibleExampleRoundTripsAgainstDatabase(t *testing.T) {
 	ctx := context.Background()
@@ -27,13 +41,13 @@ func TestIntegrationOpenAICompatibleExampleRoundTripsAgainstDatabase(t *testing.
 		captured.DecodeErr = json.NewDecoder(r.Body).Decode(&captured.Request)
 		requests <- captured
 
-		response := embeddingsResponse{
-			Data: make([]embeddingItem, 0, len(captured.Request.Input)),
+		response := map[string]any{
+			"data": make([]map[string]any, 0, len(captured.Request.Input)),
 		}
 		for index, input := range captured.Request.Input {
-			response.Data = append(response.Data, embeddingItem{
-				Index:     index,
-				Embedding: integrationEmbeddingVector(input),
+			response["data"] = append(response["data"].([]map[string]any), map[string]any{
+				"index":     index,
+				"embedding": integrationEmbeddingVector(input),
 			})
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -42,17 +56,23 @@ func TestIntegrationOpenAICompatibleExampleRoundTripsAgainstDatabase(t *testing.
 	}))
 	defer server.Close()
 
+	embedder, err := exampleembed.Config{
+		Provider:   exampleembed.ProviderOpenAICompatible,
+		URL:        server.URL,
+		APIKey:     "secret",
+		Model:      "demo-embedding",
+		Dimensions: 3,
+		Timeout:    5 * time.Second,
+	}.NewEmbedder()
+	if err != nil {
+		t.Fatalf("NewEmbedder() error = %v", err)
+	}
+
 	store, err := simplykb.New(ctx, simplykb.Config{
 		DatabaseURL:         testdb.URLWithSearchPath(t, databaseURL, schema),
 		DefaultCollection:   "integration-example",
 		EmbeddingDimensions: 3,
-		Embedder: &openAICompatibleEmbedder{
-			client:             server.Client(),
-			url:                server.URL,
-			apiKey:             "secret",
-			model:              "demo-embedding",
-			expectedDimensions: 3,
-		},
+		Embedder:            embedder,
 	})
 	if err != nil {
 		t.Fatalf("simplykb.New() error = %v", err)
