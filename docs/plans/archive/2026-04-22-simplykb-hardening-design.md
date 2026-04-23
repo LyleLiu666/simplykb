@@ -1,9 +1,13 @@
 # simplykb Hardening Design
 
-Status: `working`
+Status: `historical`
 
-This is the active plan for the next retrieval hardening slice.
-For the current public project contract, start with [README.md](../../README.md).
+Archived on `2026-04-23` after the hardening slice landed in code, tests, [README.md](../../../README.md), [docs/troubleshooting.md](../../troubleshooting.md), and [CHANGELOG.md](../../../CHANGELOG.md).
+
+This file is kept as design provenance for the `v0.2.0` hardening work.
+The remaining sections preserve the pre-implementation plan and may describe future work or old repo behavior that is no longer current.
+
+For the current public project contract, start with [README.md](../../../README.md).
 
 ## Document Purpose
 
@@ -30,20 +34,20 @@ The following observations are accepted as directionally correct for the current
 
 ### 1. Write amplification is real on document updates
 
-Today, [`UpsertDocument`](../../store.go) always splits content, generates embeddings, deletes old chunks, and reinserts the full chunk set.
+Today, [`UpsertDocument`](../../../store.go) always splits content, generates embeddings, deletes old chunks, and reinserts the full chunk set.
 
 The current implementation stores `content_hash`, but it does not use that value to avoid unnecessary work.
 That means repeated writes of unchanged content do more CPU, network, and database work than necessary.
 
 ### 2. The search path is intentionally simple, but still early
 
-Today, [`Search`](../../store.go) embeds the query synchronously on every vector or hybrid call and fuses keyword plus vector candidates with fixed reciprocal rank fusion.
+Today, [`Search`](../../../store.go) embeds the query synchronously on every vector or hybrid call and fuses keyword plus vector candidates with fixed reciprocal rank fusion.
 
 That simplicity is aligned with the current product shape, but the current path does not yet expose retrieval diagnostics, repeated-query optimization, or a clean extension point for higher-cost ranking stages.
 
 ### 3. The public query surface is narrow
 
-Today, [`SearchRequest`](../../types.go) intentionally exposes a small set of fields and both retrieval branches use the same simple metadata containment filter.
+Today, [`SearchRequest`](../../../types.go) intentionally exposes a small set of fields and both retrieval branches use the same simple metadata containment filter.
 
 That is acceptable for the current SDK shape, but it also means more advanced policy, tenancy, weighting, and paging behavior is not yet represented in the public contract.
 
@@ -448,8 +452,8 @@ For the search hardening work:
 
 Each phase should update:
 
-- [`README.md`](../../README.md) for public capability wording
-- [`docs/troubleshooting.md`](../troubleshooting.md) for new operator-visible behavior
+- [`README.md`](../../../README.md) for public capability wording
+- [`docs/troubleshooting.md`](../../troubleshooting.md) for new operator-visible behavior
 - benchmarks or benchmark notes when a change is meant to reduce cost
 - release notes when exported APIs or rollout requirements change
 
@@ -498,13 +502,13 @@ They should be anchored in code and tests:
 
 The likely implementation footprint for this plan is:
 
-- [`store.go`](../../store.go)
-- [`types.go`](../../types.go)
-- [`config.go`](../../config.go)
-- [`integration_test.go`](../../integration_test.go)
-- [`benchmark_test.go`](../../benchmark_test.go)
-- [`README.md`](../../README.md)
-- [`docs/troubleshooting.md`](../troubleshooting.md)
+- [`store.go`](../../../store.go)
+- [`types.go`](../../../types.go)
+- [`config.go`](../../../config.go)
+- [`integration_test.go`](../../../integration_test.go)
+- [`benchmark_test.go`](../../../benchmark_test.go)
+- [`README.md`](../../../README.md)
+- [`docs/troubleshooting.md`](../../troubleshooting.md)
 
 The initial implementation should avoid schema churn unless a concrete gap appears during implementation.
 The current design can likely ship the first phase with logic changes, one additive method, and tests only.

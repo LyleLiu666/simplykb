@@ -411,6 +411,10 @@ The current documented development target is:
 
 If you want the most predictable local setup, use the bundled Compose file instead of wiring your own database first.
 
+## Documentation Map
+
+If you want the current documentation tree in one place, start with [docs/README.md](docs/README.md).
+
 ## Troubleshooting
 
 Common setup and runtime issues are documented in [docs/troubleshooting.md](docs/troubleshooting.md).
