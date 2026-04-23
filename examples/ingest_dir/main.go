@@ -257,12 +257,7 @@ func loadDocument(root string, path string, extension string) (sourceDocument, e
 	if err != nil {
 		return sourceDocument{}, fmt.Errorf("resolve absolute path for %s: %w", path, err)
 	}
-	absolutePath = filepath.ToSlash(absolutePath)
-
-	sourceURL := (&url.URL{
-		Scheme: "file",
-		Path:   absolutePath,
-	}).String()
+	sourceURL := buildFileSourceURI(absolutePath)
 
 	baseName := filepath.Base(relativePath)
 	title := strings.TrimSuffix(baseName, filepath.Ext(baseName))
@@ -284,6 +279,43 @@ func loadDocument(root string, path string, extension string) (sourceDocument, e
 			},
 		},
 	}, nil
+}
+
+func buildFileSourceURI(absolutePath string) string {
+	normalized := strings.ReplaceAll(absolutePath, `\`, "/")
+	if hasWindowsUNCPrefix(normalized) {
+		hostAndPath := strings.TrimPrefix(normalized, "//")
+		host, path, ok := strings.Cut(hostAndPath, "/")
+		if !ok {
+			return (&url.URL{
+				Scheme: "file",
+				Host:   host,
+			}).String()
+		}
+		return (&url.URL{
+			Scheme: "file",
+			Host:   host,
+			Path:   "/" + path,
+		}).String()
+	}
+	if hasWindowsDrivePrefix(normalized) {
+		normalized = "/" + normalized
+	}
+	return (&url.URL{
+		Scheme: "file",
+		Path:   normalized,
+	}).String()
+}
+
+func hasWindowsDrivePrefix(path string) bool {
+	if len(path) < 2 || path[1] != ':' {
+		return false
+	}
+	return ('A' <= path[0] && path[0] <= 'Z') || ('a' <= path[0] && path[0] <= 'z')
+}
+
+func hasWindowsUNCPrefix(path string) bool {
+	return strings.HasPrefix(path, "//") && len(path) > 2 && path[2] != '/'
 }
 
 func intEnvOrDefault(key string, fallback int) (int, error) {

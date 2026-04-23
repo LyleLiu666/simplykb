@@ -74,6 +74,48 @@ func TestNormalizeExtensions(t *testing.T) {
 	}
 }
 
+func TestBuildFileSourceURI(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "unix path",
+			path: "/tmp/demo.txt",
+			want: "file:///tmp/demo.txt",
+		},
+		{
+			name: "unix path with spaces",
+			path: "/tmp/demo notes.txt",
+			want: "file:///tmp/demo%20notes.txt",
+		},
+		{
+			name: "windows drive path",
+			path: `C:\tmp\demo.txt`,
+			want: "file:///C:/tmp/demo.txt",
+		},
+		{
+			name: "windows drive path with spaces",
+			path: `D:\team docs\demo notes.txt`,
+			want: "file:///D:/team%20docs/demo%20notes.txt",
+		},
+		{
+			name: "windows unc path",
+			path: `\\server\share\demo notes.txt`,
+			want: "file://server/share/demo%20notes.txt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildFileSourceURI(tt.path); got != tt.want {
+				t.Fatalf("buildFileSourceURI(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCollectDocumentsLoadsSupportedTextFiles(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "notes.md"), "hello markdown")

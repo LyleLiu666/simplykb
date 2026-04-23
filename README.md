@@ -248,6 +248,7 @@ That example keeps provider-specific code outside the SDK core and shows one pra
 Run it like this after ParadeDB is up:
 
 ```bash
+SIMPLYKB_EMBEDDER_PROVIDER=openai_compatible \
 SIMPLYKB_EMBEDDING_URL=https://your-provider.example/v1/embeddings \
 SIMPLYKB_EMBEDDING_MODEL=... \
 SIMPLYKB_EMBEDDING_DIMENSIONS=1536 \
