@@ -9,7 +9,7 @@ The format is simple on purpose:
 - Fixed
 - Docs
 
-## Unreleased
+## v0.2.0 - 2026-04-23
 
 ### Added
 
@@ -29,6 +29,7 @@ The format is simple on purpose:
 - Metadata-only document updates now refresh duplicated chunk metadata in place without rebuilding chunks or embeddings.
 - `Search` now delegates to the same underlying path as `SearchDetailed`, so hit ordering stays aligned across both entrypoints.
 - Query embedding cache configuration now fails fast unless the embedder explicitly implements `QueryEmbeddingCacheKeyer`.
+- Local integration benchmarks now show the intended fast paths clearly: unchanged-document upserts are materially cheaper than full rewrites, and cached vector searches are materially cheaper than uncached ones.
 
 ### Fixed
 
