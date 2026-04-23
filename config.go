@@ -14,17 +14,18 @@ const (
 )
 
 type Config struct {
-	DatabaseURL         string
-	DefaultCollection   string
-	EmbeddingDimensions int
-	Embedder            Embedder
-	Splitter            Splitter
-	MinConns            int32
-	MaxConns            int32
-	DefaultSearchLimit  int
-	CandidateLimit      int
-	RRFConstant         int
-	MaxDocumentBytes    int
+	DatabaseURL             string
+	DefaultCollection       string
+	EmbeddingDimensions     int
+	Embedder                Embedder
+	Splitter                Splitter
+	MinConns                int32
+	MaxConns                int32
+	DefaultSearchLimit      int
+	CandidateLimit          int
+	RRFConstant             int
+	MaxDocumentBytes        int
+	QueryEmbeddingCacheSize int
 }
 
 func (c Config) normalized() Config {
@@ -70,6 +71,14 @@ func (c Config) validate() error {
 	}
 	if c.CandidateLimit > 0 && c.DefaultSearchLimit > c.CandidateLimit {
 		return fmt.Errorf("default search limit %d cannot exceed candidate limit %d", c.DefaultSearchLimit, c.CandidateLimit)
+	}
+	if c.QueryEmbeddingCacheSize < 0 {
+		return errors.New("query embedding cache size cannot be negative")
+	}
+	if c.QueryEmbeddingCacheSize > 0 {
+		if _, ok := c.Embedder.(QueryEmbeddingCacheKeyer); !ok {
+			return errors.New("query embedding cache requires embedder implementing QueryEmbeddingCacheKeyer")
+		}
 	}
 	return nil
 }

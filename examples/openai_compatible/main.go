@@ -224,6 +224,13 @@ func (e *openAICompatibleEmbedder) Embed(ctx context.Context, texts []string) ([
 	return out, nil
 }
 
+func (e *openAICompatibleEmbedder) QueryEmbeddingCacheKey(ctx context.Context, normalizedQuery string) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	return normalizedQuery, true, nil
+}
+
 func defaultDatabaseURL() string {
 	return exampleenv.DefaultDatabaseURL()
 }

@@ -25,8 +25,8 @@ If we mix "consumer project behavior" with "SDK behavior", the final judgment wi
 
 The comparison below is based on:
 
-- current repository source under [`store.go`](../../store.go), [`schema.go`](../../schema.go), [`config.go`](../../config.go), [`embedder_hash.go`](../../embedder_hash.go), and [`README.md`](../../README.md)
-- repository tests under [`integration_test.go`](../../integration_test.go), [`store_test.go`](../../store_test.go), and [`sdk_consumer_integration_test.go`](../../sdk_consumer_integration_test.go)
+- current repository source under [`store.go`](../../../store.go), [`schema.go`](../../../schema.go), [`config.go`](../../../config.go), [`embedder_hash.go`](../../../embedder_hash.go), and [`README.md`](../../../README.md)
+- repository tests under [`integration_test.go`](../../../integration_test.go), [`store_test.go`](../../../store_test.go), and [`sdk_consumer_integration_test.go`](../../../sdk_consumer_integration_test.go)
 - local verification run on 2026-04-21 with `go test ./...`
 - local verification run on 2026-04-21 with `make verify`
 
@@ -52,9 +52,9 @@ Original point:
 
 Verified facts:
 
-- the public integration shape in the current SDK is explicitly documented as `Migrate`, `UpsertDocument`, and `Search` in [`README.md`](../../README.md)
-- the actual SDK implementation exposes those behaviors in [`store.go`](../../store.go)
-- the repository has an external consumer integration test that creates a fresh Go module, imports `simplykb`, runs `Migrate`, `UpsertDocument`, and `Search`, and expects a successful result in [`sdk_consumer_integration_test.go`](../../sdk_consumer_integration_test.go)
+- the public integration shape in the current SDK is explicitly documented as `Migrate`, `UpsertDocument`, and `Search` in [`README.md`](../../../README.md)
+- the actual SDK implementation exposes those behaviors in [`store.go`](../../../store.go)
+- the repository has an external consumer integration test that creates a fresh Go module, imports `simplykb`, runs `Migrate`, `UpsertDocument`, and `Search`, and expects a successful result in [`sdk_consumer_integration_test.go`](../../../sdk_consumer_integration_test.go)
 
 What is wrong or incomplete in the original point:
 
@@ -85,12 +85,12 @@ Original point:
 Verified facts:
 
 - the current repository has a `v0.1.0` tag
-- the first release is recorded in [`CHANGELOG.md`](../../CHANGELOG.md)
+- the first release is recorded in [`CHANGELOG.md`](../../../CHANGELOG.md)
 - the repository also has several positive maturity signals:
-- CI with unit and integration coverage in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
-- a release guide in [`RELEASING.md`](../../RELEASING.md)
-- an external consumer compatibility test in [`sdk_consumer_integration_test.go`](../../sdk_consumer_integration_test.go)
-- a `make verify` path recorded in [`Makefile`](../../Makefile)
+- CI with unit and integration coverage in [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml)
+- a release guide in [`RELEASING.md`](../../../RELEASING.md)
+- an external consumer compatibility test in [`sdk_consumer_integration_test.go`](../../../sdk_consumer_integration_test.go)
+- a `make verify` path recorded in [`Makefile`](../../../Makefile)
 
 What is wrong or incomplete in the original point:
 
@@ -120,9 +120,9 @@ Original point:
 
 Verified facts:
 
-- `UpsertDocument` in [`store.go`](../../store.go) wraps document upsert, old chunk deletion, new chunk insertion, and chunk count update in one transaction
+- `UpsertDocument` in [`store.go`](../../../store.go) wraps document upsert, old chunk deletion, new chunk insertion, and chunk count update in one transaction
 - that does support the claim that SDK-level write consistency is handled deliberately
-- integration tests cover several failure paths such as splitter failure, vector count mismatch, vector dimension mismatch, and embedding dimension drift in [`integration_test.go`](../../integration_test.go)
+- integration tests cover several failure paths such as splitter failure, vector count mismatch, vector dimension mismatch, and embedding dimension drift in [`integration_test.go`](../../../integration_test.go)
 
 What is wrong or unsupported in the original point:
 
@@ -152,8 +152,8 @@ Original point:
 
 Verified facts:
 
-- the SDK pushes metadata filtering down into both keyword and vector SQL paths in [`store.go`](../../store.go)
-- the repository includes integration coverage for metadata filtering in [`integration_test.go`](../../integration_test.go)
+- the SDK pushes metadata filtering down into both keyword and vector SQL paths in [`store.go`](../../../store.go)
+- the repository includes integration coverage for metadata filtering in [`integration_test.go`](../../../integration_test.go)
 
 What is wrong or too strong in the original point:
 
@@ -183,9 +183,9 @@ Original point:
 
 Verified facts:
 
-- the quickstart and README use `HashEmbedder` for local evaluation in [`README.md`](../../README.md)
-- the README explicitly labels it demo-only and says not to treat it as a production strategy in [`README.md`](../../README.md)
-- a more production-shaped provider example exists in [`examples/openai_compatible/main.go`](../../examples/openai_compatible/main.go)
+- the quickstart and README use `HashEmbedder` for local evaluation in [`README.md`](../../../README.md)
+- the README explicitly labels it demo-only and says not to treat it as a production strategy in [`README.md`](../../../README.md)
+- a more production-shaped provider example exists in [`examples/openai_compatible/main.go`](../../../examples/openai_compatible/main.go)
 - the SDK does not appear to contain a runtime environment check that forbids `HashEmbedder` in production
 
 What is wrong or incomplete in the original point:
@@ -580,4 +580,4 @@ An extra business-side check is better described as defense-in-depth unless ther
 Finally, the current repository is honest about `HashEmbedder`.
 It is useful for smoke testing and demos, but the production boundary is expressed through docs and example design, not through a hard runtime block.
 
-Evidence note: this summary is based on [`README.md`](../../README.md), [`store.go`](../../store.go), [`integration_test.go`](../../integration_test.go), [`sdk_consumer_integration_test.go`](../../sdk_consumer_integration_test.go), [`Makefile`](../../Makefile), [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), [`CHANGELOG.md`](../../CHANGELOG.md), and local verification run on 2026-04-21 with `go test ./...` and `make verify`.
+Evidence note: this summary is based on [`README.md`](../../../README.md), [`store.go`](../../../store.go), [`integration_test.go`](../../../integration_test.go), [`sdk_consumer_integration_test.go`](../../../sdk_consumer_integration_test.go), [`Makefile`](../../../Makefile), [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml), [`CHANGELOG.md`](../../../CHANGELOG.md), and local verification run on 2026-04-21 with `go test ./...` and `make verify`.

@@ -48,8 +48,26 @@ verify: db-up
 	$(MAKE) doctor
 	$(MAKE) integration-test
 
+.PHONY: db-preflight-port
+db-preflight-port:
+	@container_id=$$($(COMPOSE) ps -q $(DB_SERVICE) 2>/dev/null || true); \
+	if [ -n "$$container_id" ]; then \
+		status=$$(docker inspect --format '{{.State.Status}}' "$$container_id" 2>/dev/null || true); \
+		if [ "$$status" = "running" ]; then \
+			exit 0; \
+		fi; \
+	fi; \
+	if ! command -v lsof >/dev/null 2>&1; then \
+		exit 0; \
+	fi; \
+	if lsof -nP -iTCP:$(PARADEDB_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+		echo "local port $(PARADEDB_PORT) is already in use"; \
+		echo "set PARADEDB_PORT to any free local port, for example PARADEDB_PORT=45432 make smoke"; \
+		exit 1; \
+	fi
+
 .PHONY: db-up
-db-up:
+db-up: db-preflight-port
 	$(COMPOSE) up -d
 	$(MAKE) db-wait
 

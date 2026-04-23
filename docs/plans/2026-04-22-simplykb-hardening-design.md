@@ -1,5 +1,10 @@
 # simplykb Hardening Design
 
+Status: `working`
+
+This is the active plan for the next retrieval hardening slice.
+For the current public project contract, start with [README.md](../../README.md).
+
 ## Document Purpose
 
 This document turns a useful external feedback note into a concrete hardening plan for `simplykb`.
@@ -251,6 +256,7 @@ type SearchDiagnostics struct {
     KeywordCandidateCount  int
     VectorCandidateCount   int
     FusedCandidateCount    int
+    QueryEmbeddingCacheStatus QueryEmbeddingCacheStatus
     QueryEmbeddingCacheHit bool
     HadContextDeadline     bool
 }
@@ -264,7 +270,8 @@ type SearchDiagnostics struct {
 - keyword candidate count
 - vector candidate count
 - fused hit count before truncation
-- whether the query embedding came from cache
+- whether query caching was disabled, bypassed, missed, hit, or not applicable for this request
+- whether the query embedding came from cache as a convenience bool
 - whether the caller provided a deadline on `ctx`
 
 `SearchDetailed` should always populate diagnostics.
@@ -306,21 +313,29 @@ Because of that, the cache must be scoped to a single `Store` instance and shoul
 
 ### Cache contract
 
-The first cache version must only be treated as correct for context-invariant embedders.
+The first cache version must not guess whether request-scoped context matters.
+Instead, cache use should be an explicit embedder opt-in.
 
-That means:
+Add a narrow optional interface:
 
-- embedding output is determined by normalized query text plus store-level configuration
-- `context.Context` is used only for cancellation, deadlines, and transport-scoped concerns
-- the embedder does not switch model, tenant, locale, or routing behavior based on request-scoped context values
+```go
+type QueryEmbeddingCacheKeyer interface {
+    QueryEmbeddingCacheKey(ctx context.Context, normalizedQuery string) (key string, ok bool, err error)
+}
+```
 
-If an embedder uses context as part of semantic routing, the caller should leave `QueryEmbeddingCacheSize` at `0`.
-The first version should not attempt to inspect or hash arbitrary context values.
+Rules:
+
+- if the embedder does not implement this interface, `New` and `Config.validate()` should fail fast when `QueryEmbeddingCacheSize > 0`
+- if `ok == false`, that request bypasses cache and falls back to direct embedding
+- if `err != nil`, search should fail fast instead of silently using an unsafe cache key
+- if `ok == true`, the returned key must already include any tenant, locale, model, routing target, or other request-scoped factor that affects embedding output
+- built-in embedders that are context-invariant can return the normalized query directly
 
 Safe cache rules:
 
 - nil or zero-sized cache means current behavior
-- cache key is based on the normalized query text within one `Store`
+- cache key is always resolved by the embedder within one `Store`
 - cache entries are invalidated by store replacement, not by global state
 - a cache miss or cache failure falls back to direct embedding
 - cache access must be safe under concurrent `Search` and `SearchDetailed` calls from many goroutines
@@ -353,6 +368,13 @@ Even so, this hardening plan should prefer less brittle extension shapes:
 - keep `Search` intact and add `SearchDetailed` separately
 - call out any exported `Config` growth explicitly in changelog and release notes
 - keep examples and documentation on keyed struct literals rather than positional ones
+
+Compatibility rule for this plan:
+
+- phase 1 must not grow `DocumentStats`
+- phase 2 may add `Config.QueryEmbeddingCacheSize`, but that additive exported-field change must be treated as an explicit pre-1.0 compatibility event and called out in release notes
+- phase 2 cache hardening should prefer a new exported interface over adding another `Config` field for cache-key behavior
+- if future diagnostics need richer write results, they should prefer a new opt-in response type over mutating existing write result structs
 
 This is especially important because the repository already presents a small stable SDK surface as part of its value proposition.
 
@@ -436,6 +458,9 @@ Operator-facing acceptance for phase 1:
 - public docs must state that unchanged documents do not automatically refresh after splitter or embedder changes
 - public docs must show `ReindexDocument` as the required rebuild path for indexing-recipe rollouts
 - troubleshooting guidance must include recipe-change rollout as a first-class case, not a footnote
+- release notes must explicitly call out that splitter or embedder rollouts no longer refresh unchanged documents through `UpsertDocument`
+- release notes must tell operators to use `ReindexDocument` for recipe-change rebuilds
+- public docs and release notes must state that enabling query cache requires an embedder implementing `QueryEmbeddingCacheKeyer`
 
 ## Rollback Plan
 
@@ -466,7 +491,7 @@ They should be anchored in code and tests:
 - retryable concurrent-change behavior should be anchored by a typed error plus tests using `errors.Is`
 - `Search` and `SearchDetailed` ranking equivalence should be locked by tests
 - cache-disabled-by-default behavior should be enforced in `Config.normalized()` and `Config.validate()`
-- cache use must be documented as valid only for context-invariant embedders
+- cache activation must be documented as an explicit embedder opt-in via `QueryEmbeddingCacheKeyer`
 - concurrent cache access should be covered by race-oriented tests
 
 ## Expected File Areas
@@ -532,3 +557,19 @@ The external feedback is most useful when translated into this narrower conclusi
 - protect the SDK's intentionally narrow boundary
 
 That path keeps the current strengths of `simplykb` intact while addressing the most justified weaknesses first.
+
+## Recommended External Wording
+
+If we want a concise external rewrite of the current feedback in Chinese, use this version:
+
+写入放大目前确实还比较明显。现在的 `UpsertDocument` 还是“重新切块、重新做 embedding、删掉旧 chunk、再全量写回”的路径；更准确地说，`content_hash` 已经存了，但还没有被做成一个安全的“内容没变就直接跳过”的短路，因为这里还得区分“内容没变，但标题、标签、metadata 这类检索可见信息变了”的情况。
+
+查询链路现在也还是偏克制、偏朴素。`Search` 目前是每次同步生成 query embedding，再用固定 RRF 融合关键词和向量结果；这条链路的优点是清楚、可预期，短板则是查询复用、召回诊断和更高阶排序能力还没有展开。
+
+能力边界确实是收窄的。公开查询接口目前只暴露了很基础的字段，过滤也主要是简单的 metadata 包含匹配；更复杂的 ACL、多租户策略、boosting、分页这些能力，今天仍然应该由业务层自己承担。不过这里更接近有意维持的 SDK 边界，而不是“本来该有却忘了做”的缺陷。
+
+成熟度上，我会把它描述成“还早期，但已经有纪律”。`v0.1.1` 说明它还不是那种被很多线上脏场景反复打磨过的老库，但仓库已经具备比较像样的测试意识、发布纪律和诊断能力，所以更准确的判断应该是“年轻，但在朝靠谱的方向长”。
+
+基础设施适配面不宽也是事实，不过这点更像产品选择，不像实现疏漏。`simplykb` 明确收敛在 ParadeDB 加 `pgvector` 这条路线上，换来的好处是整体形状更小、更清楚、更容易工程化；代价则是它不是一个追求普通 Postgres 平滑复用的通用层。
+
+如果一句话概括：`simplykb` 的长处是克制、清楚、边界明确，工程味已经出来了；它现在最该继续补强的，是文档更新时的写入效率、检索链路的观测与复用能力，以及一个早期 SDK 还需要时间积累的长期线上磨损度。

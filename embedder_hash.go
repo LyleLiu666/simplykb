@@ -38,6 +38,13 @@ func (e *HashEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, 
 	return out, nil
 }
 
+func (e *HashEmbedder) QueryEmbeddingCacheKey(ctx context.Context, normalizedQuery string) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	return normalizedQuery, true, nil
+}
+
 func collectFeatures(text string) []string {
 	cleaned := strings.ToLower(strings.TrimSpace(text))
 	if cleaned == "" {

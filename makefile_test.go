@@ -58,6 +58,23 @@ func TestMakeDoctorDoesNotStartDatabase(t *testing.T) {
 	}
 }
 
+func TestMakeDBUpDryRunChecksPortBeforeStartingDocker(t *testing.T) {
+	got := makeCommandOutput(t, []string{"-n", "db-up"})
+	portCheck := "lsof -nP -iTCP:"
+	upCommand := "docker compose up -d"
+	portCheckIndex := strings.Index(got, portCheck)
+	upCommandIndex := strings.Index(got, upCommand)
+	if portCheckIndex == -1 {
+		t.Fatalf("make db-up dry-run should include a port preflight check\n%s", got)
+	}
+	if upCommandIndex == -1 {
+		t.Fatalf("make db-up dry-run should still invoke docker compose up\n%s", got)
+	}
+	if portCheckIndex > upCommandIndex {
+		t.Fatalf("make db-up dry-run should check the port before docker compose up\n%s", got)
+	}
+}
+
 func makeTargetOutput(t *testing.T, target string, env ...string) string {
 	t.Helper()
 

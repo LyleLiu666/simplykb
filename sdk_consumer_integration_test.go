@@ -46,10 +46,11 @@ import (
 func main() {
 	ctx := context.Background()
 	store, err := simplykb.New(ctx, simplykb.Config{
-		DatabaseURL:         os.Getenv("SIMPLYKB_DATABASE_URL"),
-		DefaultCollection:   "external",
-		EmbeddingDimensions: 256,
-		Embedder:            simplykb.NewHashEmbedder(256),
+		DatabaseURL:             os.Getenv("SIMPLYKB_DATABASE_URL"),
+		DefaultCollection:       "external",
+		EmbeddingDimensions:     256,
+		Embedder:                simplykb.NewHashEmbedder(256),
+		QueryEmbeddingCacheSize: 8,
 	})
 	if err != nil {
 		log.Fatalf("new store: %v", err)
@@ -60,12 +61,49 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	if _, err := store.UpsertDocument(ctx, simplykb.UpsertDocumentRequest{
+	req := simplykb.UpsertDocumentRequest{
 		DocumentID: "doc-1",
 		Title:      "External Consumer",
 		Content:    "embedded sdk recall works from another module",
-	}); err != nil {
+	}
+	if _, err := store.UpsertDocument(ctx, req); err != nil {
 		log.Fatalf("upsert: %v", err)
+	}
+	if _, err := store.ReindexDocument(ctx, req); err != nil {
+		log.Fatalf("reindex: %v", err)
+	}
+
+	first, err := store.SearchDetailed(ctx, simplykb.SearchRequest{
+		Query: "embedded sdk",
+		Limit: 1,
+		Mode:  simplykb.SearchModeVector,
+	})
+	if err != nil {
+		log.Fatalf("first detailed search: %v", err)
+	}
+	if len(first.Hits) == 0 {
+		log.Fatal("first detailed search returned no hits")
+	}
+	if first.Diagnostics.QueryEmbeddingCacheHit {
+		log.Fatal("first detailed search should miss cache")
+	}
+	if first.Diagnostics.QueryEmbeddingCacheStatus != simplykb.QueryEmbeddingCacheStatusMiss {
+		log.Fatalf("first detailed search cache status: %s", first.Diagnostics.QueryEmbeddingCacheStatus)
+	}
+
+	second, err := store.SearchDetailed(ctx, simplykb.SearchRequest{
+		Query: "embedded sdk",
+		Limit: 1,
+		Mode:  simplykb.SearchModeVector,
+	})
+	if err != nil {
+		log.Fatalf("second detailed search: %v", err)
+	}
+	if !second.Diagnostics.QueryEmbeddingCacheHit {
+		log.Fatal("second detailed search should hit cache")
+	}
+	if second.Diagnostics.QueryEmbeddingCacheStatus != simplykb.QueryEmbeddingCacheStatusHit {
+		log.Fatalf("second detailed search cache status: %s", second.Diagnostics.QueryEmbeddingCacheStatus)
 	}
 
 	hits, err := store.Search(ctx, simplykb.SearchRequest{
@@ -78,7 +116,7 @@ func main() {
 	if len(hits) == 0 {
 		log.Fatal("no hits returned")
 	}
-	fmt.Printf("external-consumer-ok %s\n", hits[0].DocumentID)
+	fmt.Printf("external-consumer-ok %s %s\n", hits[0].DocumentID, second.Diagnostics.QueryEmbeddingCacheStatus)
 }
 `
 	if err := os.WriteFile(filepath.Join(tempDir, "main.go"), []byte(mainProgram), 0o644); err != nil {
@@ -100,7 +138,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("go run external consumer: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "external-consumer-ok doc-1") {
+	if !strings.Contains(string(output), "external-consumer-ok doc-1 hit") {
 		t.Fatalf("unexpected external consumer output: %s", output)
 	}
 }

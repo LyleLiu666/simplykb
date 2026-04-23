@@ -3,13 +3,16 @@ package simplykb
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LyleLiu666/simplykb/internal/sdkmeta"
 	"github.com/jackc/pgx/v5"
@@ -17,13 +20,43 @@ import (
 )
 
 type Store struct {
-	pool *pgxpool.Pool
-	cfg  Config
+	pool       *pgxpool.Pool
+	cfg        Config
+	queryCache *queryEmbeddingCache
 }
 
 type candidateHit struct {
 	internalID int64
 	hit        SearchHit
+}
+
+type queryRower interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type documentWriteAction int
+
+const (
+	documentWriteActionNoop documentWriteAction = iota
+	documentWriteActionMetadataRefresh
+	documentWriteActionReindex
+)
+
+type documentSnapshot struct {
+	exists       bool
+	internalID   int64
+	title        string
+	sourceURI    string
+	tags         []string
+	metadataJSON string
+	contentHash  string
+	chunkCount   int
+	updatedAt    time.Time
+}
+
+type preparedDocumentWrite struct {
+	chunks  []ChunkDraft
+	vectors [][]float32
 }
 
 func New(ctx context.Context, cfg Config) (*Store, error) {
@@ -53,8 +86,9 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	}
 
 	return &Store{
-		pool: pool,
-		cfg:  cfg,
+		pool:       pool,
+		cfg:        cfg,
+		queryCache: newQueryEmbeddingCache(cfg.QueryEmbeddingCacheSize),
 	}, nil
 }
 
@@ -143,6 +177,14 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 }
 
 func (s *Store) UpsertDocument(ctx context.Context, req UpsertDocumentRequest) (DocumentStats, error) {
+	return s.writeDocument(ctx, req, false, 0)
+}
+
+func (s *Store) ReindexDocument(ctx context.Context, req UpsertDocumentRequest) (DocumentStats, error) {
+	return s.writeDocument(ctx, req, true, 0)
+}
+
+func (s *Store) writeDocument(ctx context.Context, req UpsertDocumentRequest, forceReindex bool, attempt int) (DocumentStats, error) {
 	if err := s.ensureReady(); err != nil {
 		return DocumentStats{}, err
 	}
@@ -155,125 +197,46 @@ func (s *Store) UpsertDocument(ctx context.Context, req UpsertDocumentRequest) (
 		return DocumentStats{}, fmt.Errorf("content exceeds max document size of %d bytes", s.cfg.MaxDocumentBytes)
 	}
 
-	chunks, err := s.cfg.Splitter.Split(req.Content)
-	if err != nil {
-		return DocumentStats{}, fmt.Errorf("split content: %w", err)
-	}
-	if len(chunks) == 0 {
-		return DocumentStats{}, errors.New("splitter returned no chunks")
-	}
-	texts := make([]string, 0, len(chunks))
-	for _, chunk := range chunks {
-		texts = append(texts, chunk.Content)
-	}
-
-	vectors, err := s.cfg.Embedder.Embed(ctx, texts)
-	if err != nil {
-		return DocumentStats{}, fmt.Errorf("embed chunks: %w", err)
-	}
-	if len(vectors) != len(chunks) {
-		return DocumentStats{}, fmt.Errorf("embedder returned %d vectors for %d chunks", len(vectors), len(chunks))
-	}
-
 	contentHash := hashText(req.Content)
-	metadataJSON, err := json.Marshal(normalizeMetadata(req.Metadata))
+	metadataJSON, err := canonicalMetadataJSON(req.Metadata)
 	if err != nil {
 		return DocumentStats{}, fmt.Errorf("marshal metadata: %w", err)
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	existing, err := loadDocumentSnapshot(ctx, s.pool, req.Collection, req.DocumentID, false)
 	if err != nil {
-		return DocumentStats{}, fmt.Errorf("begin tx: %w", err)
+		return DocumentStats{}, err
 	}
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
 
-	var internalDocumentID int64
-	err = tx.QueryRow(ctx, `
-INSERT INTO kb_documents (
-    collection,
-    external_id,
-    title,
-    source_uri,
-    tags,
-    metadata,
-    content_hash,
-    chunk_count,
-    updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, NOW())
-ON CONFLICT (collection, external_id)
-DO UPDATE SET
-    title = EXCLUDED.title,
-    source_uri = EXCLUDED.source_uri,
-    tags = EXCLUDED.tags,
-    metadata = EXCLUDED.metadata,
-    content_hash = EXCLUDED.content_hash,
-    updated_at = NOW()
-RETURNING id
-`, req.Collection, req.DocumentID, req.Title, req.SourceURI, req.Tags, metadataJSON, contentHash).Scan(&internalDocumentID)
+	action := classifyDocumentWrite(existing, req, contentHash, metadataJSON, forceReindex)
+	switch action {
+	case documentWriteActionNoop, documentWriteActionMetadataRefresh:
+		stats, shouldRestart, err := s.commitCheapDocumentWrite(ctx, req, contentHash, metadataJSON)
+		if err != nil {
+			return DocumentStats{}, err
+		}
+		if shouldRestart {
+			return s.restartDocumentWrite(ctx, req, forceReindex, attempt)
+		}
+		return stats, nil
+	case documentWriteActionReindex:
+	default:
+		return DocumentStats{}, fmt.Errorf("unsupported document write action %d", action)
+	}
+
+	prepared, err := s.prepareDocumentWrite(ctx, req)
 	if err != nil {
-		return DocumentStats{}, fmt.Errorf("upsert document: %w", err)
+		return DocumentStats{}, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-DELETE FROM kb_chunks
-WHERE collection = $1 AND document_id = $2
-`, req.Collection, internalDocumentID); err != nil {
-		return DocumentStats{}, fmt.Errorf("delete old chunks: %w", err)
+	stats, shouldRestart, err := s.commitReindexDocumentWrite(ctx, req, contentHash, metadataJSON, prepared, existing, forceReindex)
+	if err != nil {
+		return DocumentStats{}, err
 	}
-
-	batch := &pgx.Batch{}
-	for i, chunk := range chunks {
-		if len(vectors[i]) != s.cfg.EmbeddingDimensions {
-			return DocumentStats{}, fmt.Errorf("chunk %d vector dimension mismatch: got %d want %d", i, len(vectors[i]), s.cfg.EmbeddingDimensions)
-		}
-		batch.Queue(`
-INSERT INTO kb_chunks (
-    collection,
-    document_id,
-    document_external_id,
-    chunk_key,
-    chunk_no,
-    title,
-    content,
-    source_uri,
-    tags,
-    metadata,
-    embedding
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector)
-`, req.Collection, internalDocumentID, req.DocumentID, chunkKey(req.DocumentID, chunk.Ordinal), chunk.Ordinal, req.Title, chunk.Content, req.SourceURI, req.Tags, metadataJSON, vectorLiteral(vectors[i]))
+	if shouldRestart {
+		return s.restartDocumentWrite(ctx, req, forceReindex, attempt)
 	}
-
-	results := tx.SendBatch(ctx, batch)
-	for range chunks {
-		if _, err := results.Exec(); err != nil {
-			_ = results.Close()
-			return DocumentStats{}, fmt.Errorf("insert chunks: %w", err)
-		}
-	}
-	if err := results.Close(); err != nil {
-		return DocumentStats{}, fmt.Errorf("close insert batch: %w", err)
-	}
-
-	if _, err := tx.Exec(ctx, `
-UPDATE kb_documents
-SET chunk_count = $3, updated_at = NOW()
-WHERE collection = $1 AND id = $2
-`, req.Collection, internalDocumentID, len(chunks)); err != nil {
-		return DocumentStats{}, fmt.Errorf("update chunk count: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return DocumentStats{}, fmt.Errorf("commit: %w", err)
-	}
-
-	return DocumentStats{
-		Collection:  req.Collection,
-		DocumentID:  req.DocumentID,
-		ContentHash: contentHash,
-		ChunkCount:  len(chunks),
-	}, nil
+	return stats, nil
 }
 
 func (s *Store) DeleteDocument(ctx context.Context, collection string, documentID string) error {
@@ -296,24 +259,43 @@ WHERE collection = $1 AND external_id = $2
 }
 
 func (s *Store) Search(ctx context.Context, req SearchRequest) ([]SearchHit, error) {
-	if err := s.ensureReady(); err != nil {
+	response, err := s.SearchDetailed(ctx, req)
+	if err != nil {
 		return nil, err
+	}
+	return response.Hits, nil
+}
+
+func (s *Store) SearchDetailed(ctx context.Context, req SearchRequest) (SearchResponse, error) {
+	startedAt := time.Now()
+	if err := s.ensureReady(); err != nil {
+		return SearchResponse{}, err
 	}
 	req = s.normalizeSearchRequest(req)
 	if err := s.validateSearchRequest(req); err != nil {
-		return nil, err
+		return SearchResponse{}, err
 	}
 	filterJSON, err := encodeMetadataFilter(req.MetadataFilter)
 	if err != nil {
-		return nil, err
+		return SearchResponse{}, err
+	}
+
+	response := SearchResponse{}
+	response.Diagnostics.Mode = req.Mode
+	response.Diagnostics.setQueryEmbeddingCacheStatus(QueryEmbeddingCacheStatusNotApplicable)
+	if _, ok := ctx.Deadline(); ok {
+		response.Diagnostics.HadContextDeadline = true
 	}
 
 	merged := make(map[int64]*SearchHit)
 	if req.Mode == SearchModeHybrid || req.Mode == SearchModeKeyword {
+		keywordStartedAt := time.Now()
 		keywordHits, err := s.searchKeyword(ctx, req, filterJSON)
 		if err != nil {
-			return nil, err
+			return SearchResponse{}, err
 		}
+		response.Diagnostics.KeywordDuration = time.Since(keywordStartedAt)
+		response.Diagnostics.KeywordCandidateCount = len(keywordHits)
 		for rank, hit := range keywordHits {
 			mergedHit := cloneHit(hit.hit)
 			mergedHit.Score += reciprocalRank(rank+1, s.cfg.RRFConstant)
@@ -323,18 +305,19 @@ func (s *Store) Search(ctx context.Context, req SearchRequest) ([]SearchHit, err
 	}
 
 	if req.Mode == SearchModeHybrid || req.Mode == SearchModeVector {
-		queryVector, err := s.cfg.Embedder.Embed(ctx, []string{req.Query})
+		vectorStartedAt := time.Now()
+		queryVector, cacheStatus, err := s.searchQueryVector(ctx, req.Query)
 		if err != nil {
-			return nil, fmt.Errorf("embed query: %w", err)
+			return SearchResponse{}, err
 		}
-		if len(queryVector) != 1 {
-			return nil, fmt.Errorf("embedder returned %d query vectors", len(queryVector))
-		}
+		response.Diagnostics.setQueryEmbeddingCacheStatus(cacheStatus)
 
-		vectorHits, err := s.searchVector(ctx, req, queryVector[0], filterJSON)
+		vectorHits, err := s.searchVector(ctx, req, queryVector, filterJSON)
 		if err != nil {
-			return nil, err
+			return SearchResponse{}, err
 		}
+		response.Diagnostics.VectorDuration = time.Since(vectorStartedAt)
+		response.Diagnostics.VectorCandidateCount = len(vectorHits)
 		for rank, hit := range vectorHits {
 			if existing, ok := merged[hit.internalID]; ok {
 				existing.Score += reciprocalRank(rank+1, s.cfg.RRFConstant)
@@ -355,6 +338,7 @@ func (s *Store) Search(ctx context.Context, req SearchRequest) ([]SearchHit, err
 	for _, hit := range merged {
 		results = append(results, *hit)
 	}
+	response.Diagnostics.FusedCandidateCount = len(results)
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score == results[j].Score {
 			if results[i].DocumentID == results[j].DocumentID {
@@ -367,7 +351,9 @@ func (s *Store) Search(ctx context.Context, req SearchRequest) ([]SearchHit, err
 	if len(results) > req.Limit {
 		results = results[:req.Limit]
 	}
-	return results, nil
+	response.Hits = results
+	response.Diagnostics.TotalDuration = time.Since(startedAt)
+	return response, nil
 }
 
 func (s *Store) searchKeyword(ctx context.Context, req SearchRequest, filterJSON string) ([]candidateHit, error) {
@@ -483,6 +469,415 @@ func cloneHit(hit SearchHit) *SearchHit {
 	}
 	hit.Metadata = metadata
 	return &hit
+}
+
+func (s *Store) searchQueryVector(ctx context.Context, normalizedQuery string) ([]float32, QueryEmbeddingCacheStatus, error) {
+	cacheKey, useCache, fallbackStatus, err := s.resolveQueryEmbeddingCacheKey(ctx, normalizedQuery)
+	if err != nil {
+		return nil, QueryEmbeddingCacheStatusNotApplicable, err
+	}
+	if useCache {
+		if cachedVector, ok := s.queryCache.Get(cacheKey); ok {
+			return cachedVector, QueryEmbeddingCacheStatusHit, nil
+		}
+	}
+
+	queryVector, err := s.cfg.Embedder.Embed(ctx, []string{normalizedQuery})
+	if err != nil {
+		return nil, QueryEmbeddingCacheStatusNotApplicable, fmt.Errorf("embed query: %w", err)
+	}
+	if len(queryVector) != 1 {
+		return nil, QueryEmbeddingCacheStatusNotApplicable, fmt.Errorf("embedder returned %d query vectors", len(queryVector))
+	}
+	if len(queryVector[0]) != s.cfg.EmbeddingDimensions {
+		return nil, QueryEmbeddingCacheStatusNotApplicable, fmt.Errorf("query vector dimension mismatch: got %d want %d", len(queryVector[0]), s.cfg.EmbeddingDimensions)
+	}
+
+	if useCache {
+		s.queryCache.Put(cacheKey, queryVector[0])
+		return cloneVector(queryVector[0]), QueryEmbeddingCacheStatusMiss, nil
+	}
+	return cloneVector(queryVector[0]), fallbackStatus, nil
+}
+
+func (s *Store) resolveQueryEmbeddingCacheKey(ctx context.Context, normalizedQuery string) (string, bool, QueryEmbeddingCacheStatus, error) {
+	if s.queryCache == nil {
+		return "", false, QueryEmbeddingCacheStatusDisabled, nil
+	}
+
+	keyer, ok := s.cfg.Embedder.(QueryEmbeddingCacheKeyer)
+	if !ok {
+		return "", false, QueryEmbeddingCacheStatusNotApplicable, errors.New("query embedding cache requires embedder implementing QueryEmbeddingCacheKeyer")
+	}
+
+	key, ok, err := keyer.QueryEmbeddingCacheKey(ctx, normalizedQuery)
+	if err != nil {
+		return "", false, QueryEmbeddingCacheStatusNotApplicable, fmt.Errorf("resolve query embedding cache key: %w", err)
+	}
+	if !ok {
+		return "", false, QueryEmbeddingCacheStatusBypassed, nil
+	}
+	if strings.TrimSpace(key) == "" {
+		return "", false, QueryEmbeddingCacheStatusNotApplicable, errors.New("resolve query embedding cache key: empty cache key")
+	}
+	return key, true, QueryEmbeddingCacheStatusMiss, nil
+}
+
+func classifyDocumentWrite(existing documentSnapshot, req UpsertDocumentRequest, contentHash string, metadataJSON string, forceReindex bool) documentWriteAction {
+	if forceReindex {
+		return documentWriteActionReindex
+	}
+	if !existing.exists || existing.chunkCount <= 0 {
+		return documentWriteActionReindex
+	}
+	if existing.contentHash != contentHash {
+		return documentWriteActionReindex
+	}
+	if existing.title != req.Title || existing.sourceURI != req.SourceURI || !slices.Equal(existing.tags, req.Tags) || existing.metadataJSON != metadataJSON {
+		return documentWriteActionMetadataRefresh
+	}
+	return documentWriteActionNoop
+}
+
+func (s *Store) commitCheapDocumentWrite(ctx context.Context, req UpsertDocumentRequest, contentHash string, metadataJSON string) (DocumentStats, bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return DocumentStats{}, false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if err := acquireDocumentWriteLock(ctx, tx, req.Collection, req.DocumentID); err != nil {
+		return DocumentStats{}, false, err
+	}
+
+	locked, err := loadDocumentSnapshot(ctx, tx, req.Collection, req.DocumentID, true)
+	if err != nil {
+		return DocumentStats{}, false, err
+	}
+
+	switch classifyDocumentWrite(locked, req, contentHash, metadataJSON, false) {
+	case documentWriteActionNoop:
+		if err := tx.Commit(ctx); err != nil {
+			return DocumentStats{}, false, fmt.Errorf("commit: %w", err)
+		}
+		return newDocumentStats(req, contentHash, locked.chunkCount), false, nil
+	case documentWriteActionMetadataRefresh:
+		if err := s.refreshDocumentMetadata(ctx, tx, locked, req, metadataJSON); err != nil {
+			return DocumentStats{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return DocumentStats{}, false, fmt.Errorf("commit: %w", err)
+		}
+		return newDocumentStats(req, contentHash, locked.chunkCount), false, nil
+	case documentWriteActionReindex:
+		return DocumentStats{}, true, nil
+	default:
+		return DocumentStats{}, false, errors.New("unknown cheap document write action")
+	}
+}
+
+func (s *Store) prepareDocumentWrite(ctx context.Context, req UpsertDocumentRequest) (preparedDocumentWrite, error) {
+	chunks, err := s.cfg.Splitter.Split(req.Content)
+	if err != nil {
+		return preparedDocumentWrite{}, fmt.Errorf("split content: %w", err)
+	}
+	if len(chunks) == 0 {
+		return preparedDocumentWrite{}, errors.New("splitter returned no chunks")
+	}
+
+	texts := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		texts = append(texts, chunk.Content)
+	}
+
+	vectors, err := s.cfg.Embedder.Embed(ctx, texts)
+	if err != nil {
+		return preparedDocumentWrite{}, fmt.Errorf("embed chunks: %w", err)
+	}
+	if len(vectors) != len(chunks) {
+		return preparedDocumentWrite{}, fmt.Errorf("embedder returned %d vectors for %d chunks", len(vectors), len(chunks))
+	}
+	for i := range chunks {
+		if len(vectors[i]) != s.cfg.EmbeddingDimensions {
+			return preparedDocumentWrite{}, fmt.Errorf("chunk %d vector dimension mismatch: got %d want %d", i, len(vectors[i]), s.cfg.EmbeddingDimensions)
+		}
+	}
+
+	return preparedDocumentWrite{
+		chunks:  chunks,
+		vectors: vectors,
+	}, nil
+}
+
+func (s *Store) commitReindexDocumentWrite(ctx context.Context, req UpsertDocumentRequest, contentHash string, metadataJSON string, prepared preparedDocumentWrite, expected documentSnapshot, forceReindex bool) (DocumentStats, bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return DocumentStats{}, false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if err := acquireDocumentWriteLock(ctx, tx, req.Collection, req.DocumentID); err != nil {
+		return DocumentStats{}, false, err
+	}
+
+	locked, err := loadDocumentSnapshot(ctx, tx, req.Collection, req.DocumentID, true)
+	if err != nil {
+		return DocumentStats{}, false, err
+	}
+	if !documentSnapshotsEqual(locked, expected) {
+		return DocumentStats{}, true, nil
+	}
+
+	if !forceReindex {
+		switch classifyDocumentWrite(locked, req, contentHash, metadataJSON, false) {
+		case documentWriteActionNoop:
+			if err := tx.Commit(ctx); err != nil {
+				return DocumentStats{}, false, fmt.Errorf("commit: %w", err)
+			}
+			return newDocumentStats(req, contentHash, locked.chunkCount), false, nil
+		case documentWriteActionMetadataRefresh:
+			if err := s.refreshDocumentMetadata(ctx, tx, locked, req, metadataJSON); err != nil {
+				return DocumentStats{}, false, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return DocumentStats{}, false, fmt.Errorf("commit: %w", err)
+			}
+			return newDocumentStats(req, contentHash, locked.chunkCount), false, nil
+		case documentWriteActionReindex:
+		default:
+			return DocumentStats{}, false, errors.New("unknown reindex document write action")
+		}
+	}
+
+	internalDocumentID, err := s.upsertDocumentRow(ctx, tx, req, metadataJSON, contentHash)
+	if err != nil {
+		return DocumentStats{}, false, err
+	}
+	if err := s.replaceDocumentChunks(ctx, tx, req, internalDocumentID, metadataJSON, prepared); err != nil {
+		return DocumentStats{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DocumentStats{}, false, fmt.Errorf("commit: %w", err)
+	}
+
+	return newDocumentStats(req, contentHash, len(prepared.chunks)), false, nil
+}
+
+func (s *Store) refreshDocumentMetadata(ctx context.Context, tx pgx.Tx, snapshot documentSnapshot, req UpsertDocumentRequest, metadataJSON string) error {
+	if _, err := tx.Exec(ctx, `
+UPDATE kb_documents
+SET title = $3,
+    source_uri = $4,
+    tags = $5,
+    metadata = $6::jsonb,
+    updated_at = NOW()
+WHERE collection = $1 AND id = $2
+`, req.Collection, snapshot.internalID, req.Title, req.SourceURI, req.Tags, metadataJSON); err != nil {
+		return fmt.Errorf("update document metadata: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+UPDATE kb_chunks
+SET title = $3,
+    source_uri = $4,
+    tags = $5,
+    metadata = $6::jsonb,
+    updated_at = NOW()
+WHERE collection = $1 AND document_id = $2
+`, req.Collection, snapshot.internalID, req.Title, req.SourceURI, req.Tags, metadataJSON); err != nil {
+		return fmt.Errorf("update chunk metadata: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) upsertDocumentRow(ctx context.Context, tx pgx.Tx, req UpsertDocumentRequest, metadataJSON string, contentHash string) (int64, error) {
+	var internalDocumentID int64
+	err := tx.QueryRow(ctx, `
+INSERT INTO kb_documents (
+    collection,
+    external_id,
+    title,
+    source_uri,
+    tags,
+    metadata,
+    content_hash,
+    chunk_count,
+    updated_at
+) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 0, NOW())
+ON CONFLICT (collection, external_id)
+DO UPDATE SET
+    title = EXCLUDED.title,
+    source_uri = EXCLUDED.source_uri,
+    tags = EXCLUDED.tags,
+    metadata = EXCLUDED.metadata,
+    content_hash = EXCLUDED.content_hash,
+    updated_at = NOW()
+RETURNING id
+`, req.Collection, req.DocumentID, req.Title, req.SourceURI, req.Tags, metadataJSON, contentHash).Scan(&internalDocumentID)
+	if err != nil {
+		return 0, fmt.Errorf("upsert document: %w", err)
+	}
+	return internalDocumentID, nil
+}
+
+func (s *Store) replaceDocumentChunks(ctx context.Context, tx pgx.Tx, req UpsertDocumentRequest, internalDocumentID int64, metadataJSON string, prepared preparedDocumentWrite) error {
+	if _, err := tx.Exec(ctx, `
+DELETE FROM kb_chunks
+WHERE collection = $1 AND document_id = $2
+`, req.Collection, internalDocumentID); err != nil {
+		return fmt.Errorf("delete old chunks: %w", err)
+	}
+
+	batch := &pgx.Batch{}
+	for i, chunk := range prepared.chunks {
+		batch.Queue(`
+INSERT INTO kb_chunks (
+    collection,
+    document_id,
+    document_external_id,
+    chunk_key,
+    chunk_no,
+    title,
+    content,
+    source_uri,
+    tags,
+    metadata,
+    embedding
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::vector)
+`, req.Collection, internalDocumentID, req.DocumentID, chunkKey(req.DocumentID, chunk.Ordinal), chunk.Ordinal, req.Title, chunk.Content, req.SourceURI, req.Tags, metadataJSON, vectorLiteral(prepared.vectors[i]))
+	}
+
+	results := tx.SendBatch(ctx, batch)
+	for range prepared.chunks {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
+			return fmt.Errorf("insert chunks: %w", err)
+		}
+	}
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("close insert batch: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+UPDATE kb_documents
+SET chunk_count = $3, updated_at = NOW()
+WHERE collection = $1 AND id = $2
+`, req.Collection, internalDocumentID, len(prepared.chunks)); err != nil {
+		return fmt.Errorf("update chunk count: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) restartDocumentWrite(ctx context.Context, req UpsertDocumentRequest, forceReindex bool, attempt int) (DocumentStats, error) {
+	if attempt >= 1 {
+		return DocumentStats{}, fmt.Errorf("%w: collection=%s document_id=%s", ErrDocumentChangedConcurrently, req.Collection, req.DocumentID)
+	}
+	return s.writeDocument(ctx, req, forceReindex, attempt+1)
+}
+
+func acquireDocumentWriteLock(ctx context.Context, tx pgx.Tx, collection string, documentID string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, documentLockKey(collection, documentID)); err != nil {
+		return fmt.Errorf("acquire document write lock: %w", err)
+	}
+	return nil
+}
+
+func loadDocumentSnapshot(ctx context.Context, rower queryRower, collection string, documentID string, forUpdate bool) (documentSnapshot, error) {
+	query := `
+SELECT id, title, source_uri, tags, metadata, content_hash, chunk_count, updated_at
+FROM kb_documents
+WHERE collection = $1 AND external_id = $2`
+	if forUpdate {
+		query += `
+FOR UPDATE`
+	}
+
+	var (
+		snapshot      documentSnapshot
+		metadataBytes []byte
+	)
+	err := rower.QueryRow(ctx, query, collection, documentID).Scan(
+		&snapshot.internalID,
+		&snapshot.title,
+		&snapshot.sourceURI,
+		&snapshot.tags,
+		&metadataBytes,
+		&snapshot.contentHash,
+		&snapshot.chunkCount,
+		&snapshot.updatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return documentSnapshot{}, nil
+		}
+		return documentSnapshot{}, fmt.Errorf("load document snapshot: %w", err)
+	}
+
+	metadataJSON, err := canonicalStoredMetadataJSON(metadataBytes)
+	if err != nil {
+		return documentSnapshot{}, fmt.Errorf("decode stored metadata: %w", err)
+	}
+
+	snapshot.exists = true
+	snapshot.metadataJSON = metadataJSON
+	return snapshot, nil
+}
+
+func documentSnapshotsEqual(left documentSnapshot, right documentSnapshot) bool {
+	if left.exists != right.exists {
+		return false
+	}
+	if !left.exists {
+		return true
+	}
+	return left.internalID == right.internalID &&
+		left.title == right.title &&
+		left.sourceURI == right.sourceURI &&
+		left.metadataJSON == right.metadataJSON &&
+		left.contentHash == right.contentHash &&
+		left.chunkCount == right.chunkCount &&
+		left.updatedAt.Equal(right.updatedAt) &&
+		slices.Equal(left.tags, right.tags)
+}
+
+func canonicalMetadataJSON(metadata map[string]any) (string, error) {
+	bytes, err := json.Marshal(normalizeMetadata(metadata))
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
+func canonicalStoredMetadataJSON(raw []byte) (string, error) {
+	if len(raw) == 0 {
+		return canonicalMetadataJSON(nil)
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return "", err
+	}
+	return canonicalMetadataJSON(metadata)
+}
+
+func documentLockKey(collection string, documentID string) int64 {
+	sum := sha256.Sum256([]byte(collection + "\x00" + documentID))
+	return int64(binary.BigEndian.Uint64(sum[:8]))
+}
+
+func newDocumentStats(req UpsertDocumentRequest, contentHash string, chunkCount int) DocumentStats {
+	return DocumentStats{
+		Collection:  req.Collection,
+		DocumentID:  req.DocumentID,
+		ContentHash: contentHash,
+		ChunkCount:  chunkCount,
+	}
 }
 
 func (s *Store) normalizeDocumentRequest(req UpsertDocumentRequest) UpsertDocumentRequest {

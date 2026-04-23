@@ -22,15 +22,17 @@ If the database is not running, the SDK cannot create the pool or run migrations
 If you see an "address already in use" error on port `25432`, restart with a different port:
 
 ```bash
-PARADEDB_PORT=35432 make smoke
+PARADEDB_PORT=45432 make smoke
 ```
 
 or:
 
 ```bash
-PARADEDB_PORT=35432 make db-up
-PARADEDB_PORT=35432 go run ./examples/quickstart
+PARADEDB_PORT=45432 make db-up
+PARADEDB_PORT=45432 go run ./examples/quickstart
 ```
+
+`45432` is only an example. If that port is also busy, choose any other free local port.
 
 If you want one command that confirms the actual connection target and search path, run:
 
@@ -79,6 +81,25 @@ Fix:
 - if you need a different dimension, use a fresh deployment or a deliberate migration strategy
 - run `make doctor` and confirm the reported embedding column type still matches your configured dimension
 
+## Changed Splitter Or Embedder But Old Chunks Still Exist
+
+Symptoms:
+
+- you changed the splitter or embedder implementation
+- calling `UpsertDocument` with the same content did not rebuild chunks or embeddings
+- search still reflects the old chunk layout
+
+Cause:
+
+`UpsertDocument` intentionally treats unchanged content plus unchanged retrieval-visible metadata as a cheap path.
+The SDK does not try to infer splitter or embedder recipe changes from the current interfaces.
+
+Fix:
+
+- use `ReindexDocument` for documents that must be rebuilt under the new recipe
+- do not expect a same-content `UpsertDocument` call to auto-detect recipe rollouts
+- if this is a deployment-wide recipe change, plan an explicit rebuild pass in the application layer
+
 ## Search Returns No Hits
 
 Symptoms:
@@ -109,6 +130,27 @@ make doctor
 
 That output tells you whether the database is reachable, whether the schema is migrated, and whether documents and chunks are present in the current schema.
 
+## Query Cache Never Hits
+
+Symptoms:
+
+- `SearchDetailed(...).Diagnostics.QueryEmbeddingCacheHit` stays `false`
+- `SearchDetailed(...).Diagnostics.QueryEmbeddingCacheStatus` shows `disabled`, `bypassed`, or `miss`
+- you set `QueryEmbeddingCacheSize`, but repeated searches still re-embed every time
+
+Cause:
+
+Either the cache is cold, or the embedder is bypassing it for this request through `QueryEmbeddingCacheKeyer`.
+If you set `QueryEmbeddingCacheSize` without an embedder that implements `QueryEmbeddingCacheKeyer`, `New` now fails fast instead of silently disabling the cache.
+
+Fix:
+
+- implement `QueryEmbeddingCacheKeyer` on your embedder if caching is safe
+- include tenant, locale, model, or other request-scoped routing inputs in the returned cache key when they affect embeddings
+- return `ok=false` when a request should skip the cache
+- if your embedder is not safe to cache, keep `QueryEmbeddingCacheSize` at `0`
+- use `QueryEmbeddingCacheStatus` when you need to tell apart `disabled`, `bypassed`, cold `miss`, and hot `hit`
+
 ## Integration Tests Are Skipped
 
 Symptoms:
@@ -128,7 +170,7 @@ make integration-test
 If you changed the local ParadeDB port:
 
 ```bash
-PARADEDB_PORT=35432 make integration-test
+PARADEDB_PORT=45432 make integration-test
 ```
 
 ## Doctor Says The Schema Is Not Migrated Yet

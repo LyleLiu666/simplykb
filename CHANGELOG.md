@@ -11,6 +11,36 @@ The format is simple on purpose:
 
 ## Unreleased
 
+### Added
+
+- `ReindexDocument` as an explicit caller-driven full rebuild path for splitter or embedder rollout scenarios where content is unchanged.
+- `SearchDetailed` with opt-in retrieval diagnostics while keeping `Search` as the simple compatibility path.
+- `Config.QueryEmbeddingCacheSize` for an optional per-store query embedding cache on repeated vector or hybrid searches.
+- `QueryEmbeddingCacheKeyer` so embedders can opt into caching with an explicit, context-aware cache key or bypass rule.
+- `SearchDiagnostics.QueryEmbeddingCacheStatus` so callers can distinguish disabled, bypassed, miss, hit, and not-applicable states.
+- Write-path integration coverage for `noop`, metadata-only refresh, and forced reindex behavior.
+- Search integration coverage for diagnostics, cache-enabled behavior, cache-disabled behavior, and concurrent warm-cache reads.
+- A repeated-upsert integration benchmark for the unchanged-document path.
+- A Makefile preflight check that fails early when the chosen local ParadeDB port is already in use.
+
+### Changed
+
+- `UpsertDocument` can now short-circuit unchanged documents instead of always re-splitting, re-embedding, and rewriting all chunks.
+- Metadata-only document updates now refresh duplicated chunk metadata in place without rebuilding chunks or embeddings.
+- `Search` now delegates to the same underlying path as `SearchDetailed`, so hit ordering stays aligned across both entrypoints.
+- Query embedding cache configuration now fails fast unless the embedder explicitly implements `QueryEmbeddingCacheKeyer`.
+
+### Fixed
+
+- Local Docker startup now reports a clearer error before `docker compose up` when `PARADEDB_PORT` is already occupied.
+
+### Docs
+
+- README and troubleshooting now state that unchanged documents do not automatically refresh after splitter or embedder recipe changes.
+- README and troubleshooting now document `ReindexDocument` as the required rebuild path for recipe-change rollouts.
+- README and troubleshooting now document `QueryEmbeddingCacheKeyer` as the required contract for enabling query embedding cache.
+- Release notes now call out that `UpsertDocument` no longer serves as an implicit rebuild path for unchanged documents after recipe changes.
+
 ## v0.1.1 - 2026-04-21
 
 ### Added

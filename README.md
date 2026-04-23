@@ -65,9 +65,14 @@ Already included:
 - versioned schema migration with advisory lock
 - legacy-schema upgrade regression coverage in integration tests
 - document upsert and delete
+- no-op upsert for unchanged content plus unchanged retrieval-visible metadata
+- metadata-only refresh without re-splitting or re-embedding
 - default chunk splitter
 - stable chunk ids
+- explicit `ReindexDocument` for splitter or embedder rollout rebuilds
 - hybrid recall with reciprocal rank fusion
+- opt-in `SearchDetailed` diagnostics alongside the existing `Search` API
+- optional per-store query embedding cache for repeated vector or hybrid queries when the embedder opts in safely
 - simple metadata filter support in `Search`
 - local Docker Compose for ParadeDB
 - integration tests, including a provider-shaped OpenAI-compatible path
@@ -135,8 +140,10 @@ The stable success signals are:
 If port `25432` is already in use on your machine, override the local ParadeDB port:
 
 ```bash
-PARADEDB_PORT=35432 make smoke
+PARADEDB_PORT=45432 make smoke
 ```
+
+`45432` is only an example. If that port is also busy, pick any free local port.
 
 ### 2. Manual path
 
@@ -159,8 +166,8 @@ The quickstart also reads `PARADEDB_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`,
 Set `SIMPLYKB_DATABASE_URL` only if you want to bypass that local default behavior:
 
 ```bash
-PARADEDB_PORT=35432 make db-up
-PARADEDB_PORT=35432 go run ./examples/quickstart
+PARADEDB_PORT=45432 make db-up
+PARADEDB_PORT=45432 go run ./examples/quickstart
 ```
 
 This repository expects ParadeDB, not plain Postgres.
@@ -254,6 +261,79 @@ Production deployments should:
 - keep one embedding dimension per deployment
 - avoid changing embedding dimensions against an already-migrated schema
 - treat `simplykb` as a narrow embedded SDK, not a platform boundary
+- leave `QueryEmbeddingCacheSize` at `0` unless you want an in-process query cache
+- if you set `QueryEmbeddingCacheSize`, your embedder must implement `QueryEmbeddingCacheKeyer` or `New` will fail fast
+- make that cache key include tenant, locale, model, or any other request-scoped routing input your embedder actually uses
+- return `ok=false` from `QueryEmbeddingCacheKey` when one request should bypass caching entirely
+
+`UpsertDocument` is optimized for steady-state writes:
+
+- if content and retrieval-visible metadata are unchanged, it returns without rewriting document or chunk rows
+- if only `title`, `source_uri`, `tags`, or `metadata` changed, it updates those fields in place without re-splitting or re-embedding
+
+`UpsertDocument` does not try to guess whether your splitter or embedder recipe changed.
+If you roll out a new splitter or embedder and need stored chunks or embeddings rebuilt for unchanged content, call `ReindexDocument`.
+
+Example:
+
+```go
+_, err = store.ReindexDocument(ctx, simplykb.UpsertDocumentRequest{
+    DocumentID: "doc-1",
+    Title:      "BM25 notes",
+    Content:    "BM25 is still strong for exact names, short queries, and logs.",
+})
+if err != nil {
+    panic(err)
+}
+```
+
+If you need diagnostics for one search call without changing ranking behavior, use `SearchDetailed`:
+
+```go
+response, err := store.SearchDetailed(ctx, simplykb.SearchRequest{
+    Query: "exact names and logs",
+    Limit: 5,
+})
+if err != nil {
+    panic(err)
+}
+
+fmt.Println("hits", len(response.Hits))
+fmt.Println("mode", response.Diagnostics.Mode)
+fmt.Println("vector candidates", response.Diagnostics.VectorCandidateCount)
+fmt.Println("query cache status", response.Diagnostics.QueryEmbeddingCacheStatus)
+fmt.Println("query cache hit", response.Diagnostics.QueryEmbeddingCacheHit)
+```
+
+If you enable `QueryEmbeddingCacheSize`, `New` requires your embedder to implement `QueryEmbeddingCacheKeyer`.
+That makes cache eligibility explicit instead of silently falling back to re-embedding.
+
+`QueryEmbeddingCacheHit` is a convenience boolean for the hot-path question.
+If you need the full diagnosis, read `QueryEmbeddingCacheStatus`:
+
+- `disabled`
+- `bypassed`
+- `miss`
+- `hit`
+- `not_applicable`
+
+That lets the embedder decide whether:
+
+- normalized query text alone is enough
+- request context must be folded into the cache key
+- one request should bypass caching entirely
+
+Example:
+
+```go
+func (e *TenantAwareEmbedder) QueryEmbeddingCacheKey(ctx context.Context, normalizedQuery string) (string, bool, error) {
+    tenant, _ := ctx.Value(tenantContextKey{}).(string)
+    if tenant == "" {
+        return "", false, nil
+    }
+    return tenant + ":" + normalizedQuery, true, nil
+}
+```
 
 ## Operator Checks
 
@@ -277,8 +357,8 @@ This command prints:
 If you changed the local ParadeDB port:
 
 ```bash
-PARADEDB_PORT=35432 make db-up
-PARADEDB_PORT=35432 make doctor
+PARADEDB_PORT=45432 make db-up
+PARADEDB_PORT=45432 make doctor
 ```
 
 ## Run Tests

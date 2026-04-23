@@ -288,7 +288,7 @@ Each requirement has:
 
 Requirement:
 
-- Rewrite the top of [README.md](../../README.md) so a first-time visitor can understand the project in under 30 seconds.
+- Rewrite the top of [README.md](../../../README.md) so a first-time visitor can understand the project in under 30 seconds.
 - The first screen must answer:
   - what `simplykb` is
   - who it is for
@@ -310,7 +310,7 @@ Verification:
 
 Requirement:
 
-- Add a numbered first-run flow to [README.md](../../README.md).
+- Add a numbered first-run flow to [README.md](../../../README.md).
 - The flow must include:
   - start database
   - run example
@@ -439,7 +439,7 @@ Verification:
 
 Requirement:
 
-- Audit [README.md](../../README.md), [examples/quickstart/main.go](../../examples/quickstart/main.go), and future examples to make sure "demo mode" and "production mode" are clearly distinguished.
+- Audit [README.md](../../../README.md), [examples/quickstart/main.go](../../../examples/quickstart/main.go), and future examples to make sure "demo mode" and "production mode" are clearly distinguished.
 
 Deliverables:
 
@@ -811,19 +811,19 @@ The following file additions or updates are recommended.
 
 ### Update Existing
 
-- [README.md](../../README.md)
+- [README.md](../../../README.md)
 
 ### Add New
 
-- `../../.github/workflows/ci.yml`
-- `../../.github/ISSUE_TEMPLATE/bug_report.md`
-- `../../.github/ISSUE_TEMPLATE/feature_request.md`
-- `../../.github/pull_request_template.md`
-- `../../CONTRIBUTING.md`
-- `../../RELEASING.md`
-- `../../CHANGELOG.md`
-- `../troubleshooting.md`
-- `../../examples/<provider-example>/...`
+- `../../../.github/workflows/ci.yml`
+- `../../../.github/ISSUE_TEMPLATE/bug_report.md`
+- `../../../.github/ISSUE_TEMPLATE/feature_request.md`
+- `../../../.github/pull_request_template.md`
+- `../../../CONTRIBUTING.md`
+- `../../../RELEASING.md`
+- `../../../CHANGELOG.md`
+- `../../troubleshooting.md`
+- `../../../examples/<provider-example>/...`
 
 ## Prioritized TODO List
 
