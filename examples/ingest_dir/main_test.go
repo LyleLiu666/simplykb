@@ -91,6 +91,11 @@ func TestBuildFileSourceURI(t *testing.T) {
 			want: "file:///tmp/demo%20notes.txt",
 		},
 		{
+			name: "unix path with literal backslash",
+			path: "/tmp/foo\\bar.txt",
+			want: "file:///tmp/foo%5Cbar.txt",
+		},
+		{
 			name: "windows drive path",
 			path: `C:\tmp\demo.txt`,
 			want: "file:///C:/tmp/demo.txt",

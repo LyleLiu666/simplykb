@@ -282,8 +282,8 @@ func loadDocument(root string, path string, extension string) (sourceDocument, e
 }
 
 func buildFileSourceURI(absolutePath string) string {
-	normalized := strings.ReplaceAll(absolutePath, `\`, "/")
-	if hasWindowsUNCPrefix(normalized) {
+	if hasWindowsUNCPrefix(absolutePath) {
+		normalized := strings.ReplaceAll(absolutePath, `\`, "/")
 		hostAndPath := strings.TrimPrefix(normalized, "//")
 		host, path, ok := strings.Cut(hostAndPath, "/")
 		if !ok {
@@ -298,12 +298,16 @@ func buildFileSourceURI(absolutePath string) string {
 			Path:   "/" + path,
 		}).String()
 	}
-	if hasWindowsDrivePrefix(normalized) {
-		normalized = "/" + normalized
+	if hasWindowsDrivePrefix(absolutePath) {
+		normalized := "/" + strings.ReplaceAll(absolutePath, `\`, "/")
+		return (&url.URL{
+			Scheme: "file",
+			Path:   normalized,
+		}).String()
 	}
 	return (&url.URL{
 		Scheme: "file",
-		Path:   normalized,
+		Path:   absolutePath,
 	}).String()
 }
 
@@ -315,7 +319,14 @@ func hasWindowsDrivePrefix(path string) bool {
 }
 
 func hasWindowsUNCPrefix(path string) bool {
-	return strings.HasPrefix(path, "//") && len(path) > 2 && path[2] != '/'
+	switch {
+	case strings.HasPrefix(path, `\\`):
+		return len(path) > 2 && path[2] != '\\'
+	case strings.HasPrefix(path, "//"):
+		return len(path) > 2 && path[2] != '/'
+	default:
+		return false
+	}
 }
 
 func intEnvOrDefault(key string, fallback int) (int, error) {
