@@ -1,0 +1,13 @@
+date=2026-04-24 14:33:44 +0800
+sha=2168a50701ea1be2e583f5b68cb3c7f73361b53f
+tmpdir=/var/folders/vb/n_qqh1xd17z438cn347fk_cm0000gn/T/tmp.2QN6KJ48Kv
+go: creating new go.mod: module example.com/simplykb-check-sha-log
+go: added github.com/LyleLiu666/simplykb v0.2.1
+go: added github.com/jackc/pgpassfile v1.0.0
+go: added github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: added github.com/jackc/pgx/v5 v5.7.6
+go: added github.com/jackc/puddle/v2 v2.2.2
+go: added golang.org/x/crypto v0.37.0
+go: added golang.org/x/sync v0.13.0
+go: added golang.org/x/text v0.24.0
+?   	example.com/simplykb-check-sha-log	[no test files]

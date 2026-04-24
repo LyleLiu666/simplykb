@@ -22,6 +22,10 @@ Historical plans live under [plans/archive/README.md](./plans/archive/README.md)
    Role: `canonical`
    Use it when preparing or reviewing a release.
 
+5. [stable-major-release-readiness.md](./stable-major-release-readiness.md)
+   Role: `execution handoff`
+   Use it to decide what must be true before a stable major release such as `v1.0.0`.
+
 ## Historical Design Material
 
 - [plans/archive/README.md](./plans/archive/README.md)
