@@ -19,11 +19,12 @@ Before cutting a release:
 
 1. Confirm `go.mod` still declares `module github.com/LyleLiu666/simplykb`.
 2. Run `make verify`.
-3. If schema, retrieval, or setup behavior changed, also run `make integration-benchmark` and record any meaningful regression or improvement in the release notes or PR summary.
-4. Review `README.md`, `docs/troubleshooting.md`, and `examples/` for drift.
-5. Update [CHANGELOG.md](CHANGELOG.md).
-6. Push the release commit to a remote branch.
-7. Verify from a fresh external Go module using the pushed commit SHA or a temporary release-candidate tag:
+3. If the release is a stable major release such as `v1.0.0`, also clear [docs/stable-major-release-readiness.md](docs/stable-major-release-readiness.md).
+4. If schema, retrieval, or setup behavior changed, also run `make integration-benchmark` and record any meaningful regression or improvement in the release notes or PR summary.
+5. Review `README.md`, `docs/troubleshooting.md`, and `examples/` for drift.
+6. Update [CHANGELOG.md](CHANGELOG.md).
+7. Push the release commit to a remote branch.
+8. Verify from a fresh external Go module using the pushed commit SHA or a temporary release-candidate tag:
 
 ```bash
 go mod init example.com/simplykb-check
@@ -31,7 +32,7 @@ go get github.com/LyleLiu666/simplykb@<commit-or-candidate-tag>
 go mod tidy
 ```
 
-8. Create the final version tag such as `v0.1.0` only after the fresh external module check succeeds.
+9. Create the final version tag only after the fresh external module check succeeds.
 
 If the fresh external module cannot fetch and build the pushed candidate, do not publish the final release tag.
 
@@ -71,9 +72,13 @@ It is:
 - explicit production boundaries
 - low-entropy evolution
 
-## v0.1.0 Milestone Meaning
+## Historical v0.1.0 Milestone
 
-`v0.1.0` should mean:
+This section is kept as release history only.
+Do not use it as the active release checklist for later tags.
+Current releases use the checklist above, plus [docs/stable-major-release-readiness.md](docs/stable-major-release-readiness.md) for a future stable major release.
+
+`v0.1.0` meant:
 
 - the basic schema flow is stable
 - upgrade regression coverage exists for older schema states
@@ -83,17 +88,3 @@ It is:
 - the project limits are documented clearly
 - baseline CI is in place
 - dedicated integration CI is in place
-
-## v0.1.0 Milestone Checklist
-
-Use this checklist before describing the repository as meeting the `v0.1.0` bar:
-
-- [ ] schema migration flow is stable
-- [ ] older schema states upgrade cleanly in integration coverage
-- [ ] `New`, `Migrate`, `UpsertDocument`, and `Search` remain the intended public core
-- [ ] quickstart, `make doctor`, and `make verify` all pass on a normal developer machine
-- [ ] public limits and production boundaries are documented
-- [ ] reproducible benchmark entrypoints exist for local comparison
-- [ ] baseline CI passes
-- [ ] dedicated integration CI passes
-- [ ] changelog and release notes are updated

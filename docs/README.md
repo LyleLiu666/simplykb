@@ -3,6 +3,7 @@
 This branch keeps the current reading path short.
 Start with the current product contract, then move into the task-specific docs you need.
 Historical plans live under [plans/archive/README.md](./plans/archive/README.md) so old design notes do not quietly masquerade as current guidance.
+Release validation evidence lives under [release-validation/README.md](./release-validation/README.md) so one-time command records stay separate from current release rules.
 
 ## Reading Path
 
@@ -23,8 +24,12 @@ Historical plans live under [plans/archive/README.md](./plans/archive/README.md)
    Use it when preparing or reviewing a release.
 
 5. [stable-major-release-readiness.md](./stable-major-release-readiness.md)
-   Role: `execution handoff`
-   Use it to decide what must be true before a stable major release such as `v1.0.0`.
+   Role: `canonical`
+   Use it for the extra gates that must pass before a stable major release such as `v1.0.0`.
+
+6. [release-validation/README.md](./release-validation/README.md)
+   Role: `historical index`
+   Use it when you need release-gate evidence from a past validation run.
 
 ## Historical Design Material
 
