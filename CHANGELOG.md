@@ -33,6 +33,16 @@ The format is simple on purpose:
 - README now documents the chunk error contracts, configurable lower provider limits, and exact collection lifecycle APIs.
 - The external consumer integration check now compiles and runs the v0.4.0 public surface from a separate Go module.
 
+## v0.3.0 - 2026-04-24
+
+### Changed
+
+- Published the `v0.2.1` source state unchanged as the pre-`v1.0.0` stable-candidate baseline.
+
+### Docs
+
+- Added release-readiness evidence for the stable candidate and later confirmed that `v0.3.0` is fetchable and compiles from a fresh external Go module.
+
 ## v0.2.1 - 2026-04-23
 
 ### Added
