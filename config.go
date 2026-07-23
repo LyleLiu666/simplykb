@@ -11,6 +11,7 @@ const (
 	defaultCandidateLimit  = 20
 	defaultRRFConstant     = 60
 	defaultMaxDocumentSize = 2 * 1024 * 1024
+	defaultMaxChunkChars   = 5000
 )
 
 type Config struct {
@@ -25,6 +26,7 @@ type Config struct {
 	CandidateLimit          int
 	RRFConstant             int
 	MaxDocumentBytes        int
+	MaxChunkChars           int
 	QueryEmbeddingCacheSize int
 }
 
@@ -44,8 +46,15 @@ func (c Config) normalized() Config {
 	if c.MaxDocumentBytes <= 0 {
 		c.MaxDocumentBytes = defaultMaxDocumentSize
 	}
+	if c.MaxChunkChars <= 0 {
+		c.MaxChunkChars = defaultMaxChunkChars
+	}
 	if c.Splitter == nil {
-		c.Splitter = NewDefaultSplitter()
+		splitter := NewDefaultSplitter()
+		if c.MaxChunkChars < splitter.ChunkSize {
+			splitter.ChunkSize = c.MaxChunkChars
+		}
+		c.Splitter = splitter
 	}
 	return c
 }
@@ -74,6 +83,9 @@ func (c Config) validate() error {
 	}
 	if c.QueryEmbeddingCacheSize < 0 {
 		return errors.New("query embedding cache size cannot be negative")
+	}
+	if c.MaxChunkChars > defaultMaxChunkChars {
+		return fmt.Errorf("max chunk chars %d cannot exceed hard maximum %d", c.MaxChunkChars, defaultMaxChunkChars)
 	}
 	if c.QueryEmbeddingCacheSize > 0 {
 		if _, ok := c.Embedder.(QueryEmbeddingCacheKeyer); !ok {

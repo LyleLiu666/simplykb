@@ -36,6 +36,7 @@ replace github.com/LyleLiu666/simplykb => %s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -45,11 +46,19 @@ import (
 
 func main() {
 	ctx := context.Background()
+	limitErr := &simplykb.ChunkLimitError{Ordinal: 0, ActualChars: 5001, MaxChars: 5000}
+	if !errors.Is(limitErr, simplykb.ErrChunkTooLarge) {
+		log.Fatal("chunk limit error contract is not available")
+	}
+	if !errors.Is(simplykb.ErrEmptyChunk, simplykb.ErrEmptyChunk) {
+		log.Fatal("empty chunk sentinel is not available")
+	}
 	store, err := simplykb.New(ctx, simplykb.Config{
 		DatabaseURL:             os.Getenv("SIMPLYKB_DATABASE_URL"),
 		DefaultCollection:       "external",
 		EmbeddingDimensions:     256,
 		Embedder:                simplykb.NewHashEmbedder(256),
+		MaxChunkChars:           5000,
 		QueryEmbeddingCacheSize: 8,
 	})
 	if err != nil {
@@ -71,6 +80,13 @@ func main() {
 	}
 	if _, err := store.ReindexDocument(ctx, req); err != nil {
 		log.Fatalf("reindex: %v", err)
+	}
+	stats, err := store.CollectionStats(ctx, "external")
+	if err != nil {
+		log.Fatalf("collection stats: %v", err)
+	}
+	if stats.DocumentCount != 1 || stats.ChunkCount == 0 {
+		log.Fatalf("unexpected collection stats: %+v", stats)
 	}
 
 	first, err := store.SearchDetailed(ctx, simplykb.SearchRequest{
@@ -115,6 +131,16 @@ func main() {
 	}
 	if len(hits) == 0 {
 		log.Fatal("no hits returned")
+	}
+	if err := store.DeleteCollection(ctx, "external"); err != nil {
+		log.Fatalf("delete collection: %v", err)
+	}
+	stats, err = store.CollectionStats(ctx, "external")
+	if err != nil {
+		log.Fatalf("collection stats after delete: %v", err)
+	}
+	if stats.DocumentCount != 0 || stats.ChunkCount != 0 {
+		log.Fatalf("collection was not deleted: %+v", stats)
 	}
 	fmt.Printf("external-consumer-ok %s %s\n", hits[0].DocumentID, second.Diagnostics.QueryEmbeddingCacheStatus)
 }

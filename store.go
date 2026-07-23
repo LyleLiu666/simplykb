@@ -584,7 +584,10 @@ func (s *Store) prepareDocumentWrite(ctx context.Context, req UpsertDocumentRequ
 		return preparedDocumentWrite{}, fmt.Errorf("split content: %w", err)
 	}
 	if len(chunks) == 0 {
-		return preparedDocumentWrite{}, errors.New("splitter returned no chunks")
+		return preparedDocumentWrite{}, fmt.Errorf("%w: splitter returned no chunks", ErrEmptyChunk)
+	}
+	if err := validateChunks(chunks, s.cfg.MaxChunkChars); err != nil {
+		return preparedDocumentWrite{}, err
 	}
 
 	texts := make([]string, 0, len(chunks))
@@ -609,6 +612,23 @@ func (s *Store) prepareDocumentWrite(ctx context.Context, req UpsertDocumentRequ
 		chunks:  chunks,
 		vectors: vectors,
 	}, nil
+}
+
+func validateChunks(chunks []ChunkDraft, maxChars int) error {
+	for _, chunk := range chunks {
+		if strings.TrimSpace(chunk.Content) == "" {
+			return fmt.Errorf("%w: ordinal=%d", ErrEmptyChunk, chunk.Ordinal)
+		}
+		actualChars := len([]rune(chunk.Content))
+		if actualChars > maxChars {
+			return &ChunkLimitError{
+				Ordinal:     chunk.Ordinal,
+				ActualChars: actualChars,
+				MaxChars:    maxChars,
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) commitReindexDocumentWrite(ctx context.Context, req UpsertDocumentRequest, contentHash string, metadataJSON string, prepared preparedDocumentWrite, expected documentSnapshot, forceReindex bool) (DocumentStats, bool, error) {

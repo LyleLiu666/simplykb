@@ -18,6 +18,144 @@ func TestConfigValidate(t *testing.T) {
 	if err := cfg.normalized().validate(); err != nil {
 		t.Fatalf("validate() error = %v", err)
 	}
+	if got := cfg.normalized().MaxChunkChars; got != 5000 {
+		t.Fatalf("normalized MaxChunkChars = %d, want 5000", got)
+	}
+}
+
+func TestConfigValidateRejectsChunkLimitAboveHardMaximum(t *testing.T) {
+	cfg := Config{
+		DatabaseURL:         "postgres://demo",
+		EmbeddingDimensions: 64,
+		Embedder:            NewHashEmbedder(64),
+		MaxChunkChars:       5001,
+	}
+
+	err := cfg.normalized().validate()
+	if err == nil {
+		t.Fatal("expected MaxChunkChars above 5000 to fail validation")
+	}
+	if !strings.Contains(err.Error(), "5000") {
+		t.Fatalf("expected hard maximum in error, got %v", err)
+	}
+}
+
+func TestConfigLowerChunkLimitTightensDefaultSplitter(t *testing.T) {
+	cfg := Config{
+		DatabaseURL:         "postgres://demo",
+		EmbeddingDimensions: 64,
+		Embedder:            NewHashEmbedder(64),
+		MaxChunkChars:       500,
+	}.normalized()
+
+	splitter, ok := cfg.Splitter.(DefaultSplitter)
+	if !ok {
+		t.Fatalf("normalized splitter type = %T, want DefaultSplitter", cfg.Splitter)
+	}
+	if splitter.ChunkSize != 500 {
+		t.Fatalf("default splitter ChunkSize = %d, want 500", splitter.ChunkSize)
+	}
+}
+
+func TestPrepareDocumentWriteAcceptsChunkAtConfiguredLimit(t *testing.T) {
+	embedder := &plainCountingEmbedder{dimensions: 4}
+	store := &Store{
+		cfg: Config{
+			EmbeddingDimensions: 4,
+			Embedder:            embedder,
+			Splitter: &countingSplitter{chunks: []ChunkDraft{{
+				Ordinal: 0,
+				Content: strings.Repeat("界", 5000),
+			}}},
+			MaxChunkChars: 5000,
+		}.normalized(),
+	}
+
+	prepared, err := store.prepareDocumentWrite(context.Background(), UpsertDocumentRequest{Content: "source"})
+	if err != nil {
+		t.Fatalf("prepareDocumentWrite() error = %v", err)
+	}
+	if len(prepared.chunks) != 1 {
+		t.Fatalf("prepared chunks = %d, want 1", len(prepared.chunks))
+	}
+	if got := embedder.CallCount(); got != 1 {
+		t.Fatalf("embedder calls = %d, want 1", got)
+	}
+}
+
+func TestPrepareDocumentWriteRejectsOversizedUnicodeChunkBeforeEmbedding(t *testing.T) {
+	embedder := &plainCountingEmbedder{dimensions: 4}
+	store := &Store{
+		cfg: Config{
+			EmbeddingDimensions: 4,
+			Embedder:            embedder,
+			Splitter: &countingSplitter{chunks: []ChunkDraft{{
+				Ordinal: 7,
+				Content: strings.Repeat("界", 5001),
+			}}},
+			MaxChunkChars: 5000,
+		}.normalized(),
+	}
+
+	_, err := store.prepareDocumentWrite(context.Background(), UpsertDocumentRequest{Content: "source"})
+	if err == nil {
+		t.Fatal("expected oversized chunk error")
+	}
+	if !errors.Is(err, ErrChunkTooLarge) {
+		t.Fatalf("errors.Is(err, ErrChunkTooLarge) = false, err = %v", err)
+	}
+	var limitErr *ChunkLimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("errors.As(err, *ChunkLimitError) = false, err = %v", err)
+	}
+	if limitErr.Ordinal != 7 || limitErr.ActualChars != 5001 || limitErr.MaxChars != 5000 {
+		t.Fatalf("unexpected ChunkLimitError: %+v", limitErr)
+	}
+	if got := embedder.CallCount(); got != 0 {
+		t.Fatalf("embedder calls = %d, want 0", got)
+	}
+}
+
+func TestPrepareDocumentWriteRejectsEmptyChunkBeforeEmbedding(t *testing.T) {
+	embedder := &plainCountingEmbedder{dimensions: 4}
+	store := &Store{
+		cfg: Config{
+			EmbeddingDimensions: 4,
+			Embedder:            embedder,
+			Splitter: &countingSplitter{chunks: []ChunkDraft{{
+				Ordinal: 3,
+				Content: " \n\t ",
+			}}},
+			MaxChunkChars: 5000,
+		}.normalized(),
+	}
+
+	_, err := store.prepareDocumentWrite(context.Background(), UpsertDocumentRequest{Content: "source"})
+	if err == nil {
+		t.Fatal("expected empty chunk error")
+	}
+	if !errors.Is(err, ErrEmptyChunk) {
+		t.Fatalf("errors.Is(err, ErrEmptyChunk) = false, err = %v", err)
+	}
+	if got := embedder.CallCount(); got != 0 {
+		t.Fatalf("embedder calls = %d, want 0", got)
+	}
+}
+
+func TestPrepareDocumentWriteTreatsNoChunksAsEmptyChunk(t *testing.T) {
+	store := &Store{
+		cfg: Config{
+			EmbeddingDimensions: 4,
+			Embedder:            &plainCountingEmbedder{dimensions: 4},
+			Splitter:            emptySplitter{},
+			MaxChunkChars:       5000,
+		}.normalized(),
+	}
+
+	_, err := store.prepareDocumentWrite(context.Background(), UpsertDocumentRequest{Content: "source"})
+	if !errors.Is(err, ErrEmptyChunk) {
+		t.Fatalf("errors.Is(err, ErrEmptyChunk) = false, err = %v", err)
+	}
 }
 
 func TestConfigValidateRejectsNegativeQueryEmbeddingCacheSize(t *testing.T) {

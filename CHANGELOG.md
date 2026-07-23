@@ -9,6 +9,30 @@ The format is simple on purpose:
 - Fixed
 - Docs
 
+## v0.4.0 - 2026-07-23
+
+### Added
+
+- `Config.MaxChunkChars`, defaulting to 5000 Unicode characters with a hard maximum of 5000.
+- `ErrEmptyChunk`, `ErrChunkTooLarge`, and `ChunkLimitError` as stable `errors.Is`/`errors.As` contracts for caller-side error mapping.
+- `CollectionStats` for exact document and chunk counts, including named zero counts for a collection that does not exist.
+- `DeleteCollection` for transactionally deleting one exact, non-empty collection.
+
+### Changed
+
+- A lower `MaxChunkChars` value automatically tightens the default splitter target; all splitter output, including output from custom splitters, is validated before any embedder call.
+- The default splitter now guarantees that paragraph joining and overlap never produce a chunk above its configured target size.
+
+### Fixed
+
+- Paragraph separators can no longer make a default chunk exceed `ChunkSize`.
+- High overlap at a paragraph boundary no longer emits a chunk containing only repeated overlap.
+
+### Docs
+
+- README now documents the chunk error contracts, configurable lower provider limits, and exact collection lifecycle APIs.
+- The external consumer integration check now compiles and runs the v0.4.0 public surface from a separate Go module.
+
 ## v0.2.1 - 2026-04-23
 
 ### Added

@@ -55,6 +55,12 @@ type DocumentStats struct {
 	ChunkCount  int
 }
 
+type CollectionStats struct {
+	Collection    string
+	DocumentCount int64
+	ChunkCount    int64
+}
+
 type SearchRequest struct {
 	Collection     string
 	Query          string

@@ -65,6 +65,7 @@ Already included:
 - versioned schema migration with advisory lock
 - legacy-schema upgrade regression coverage in integration tests
 - document upsert and delete
+- exact collection statistics and collection deletion for controlled lifecycle operations
 - no-op upsert for unchanged content plus unchanged retrieval-visible metadata
 - metadata-only refresh without re-splitting or re-embedding
 - default chunk splitter
@@ -196,6 +197,7 @@ store, err := simplykb.New(ctx, simplykb.Config{
     DefaultCollection:   "docs",
     EmbeddingDimensions: 256,
     MaxConns:            8,
+    MaxChunkChars:       5000,
     Embedder:            simplykb.NewHashEmbedder(256), // Demo-only. Use a real provider in production.
 })
 if err != nil {
@@ -308,6 +310,37 @@ Production deployments should:
 - if you set `QueryEmbeddingCacheSize`, your embedder must implement `QueryEmbeddingCacheKeyer` or `New` will fail fast
 - make that cache key include tenant, locale, model, or any other request-scoped routing input your embedder actually uses
 - return `ok=false` from `QueryEmbeddingCacheKey` when one request should bypass caching entirely
+
+Chunk safety is enforced after any configured `Splitter` and before the
+`Embedder` is called:
+
+- `MaxChunkChars` defaults to 5000 Unicode characters
+- values above 5000 are rejected during `New`
+- lower values automatically tighten the default splitter target when an embedding provider has a smaller input limit
+- custom splitters keep their own target but are still checked against `MaxChunkChars`
+- whitespace-only chunks return an error matching `ErrEmptyChunk`
+- oversized chunks return `*ChunkLimitError` and match `ErrChunkTooLarge`
+
+Use `errors.Is` and `errors.As` with those exported contracts instead of
+matching error text.
+
+Collection lifecycle operations are exact-name operations:
+
+```go
+stats, err := store.CollectionStats(ctx, "workspace:123")
+if err != nil {
+    panic(err)
+}
+fmt.Println(stats.DocumentCount, stats.ChunkCount)
+
+if err := store.DeleteCollection(ctx, "workspace:123"); err != nil {
+    panic(err)
+}
+```
+
+`CollectionStats` returns zero counts for a collection that does not exist.
+`DeleteCollection` rejects an empty name and never interprets it as
+`DefaultCollection`.
 
 `UpsertDocument` is optimized for steady-state writes:
 
