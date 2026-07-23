@@ -9,7 +9,7 @@ The format is simple on purpose:
 - Fixed
 - Docs
 
-## v0.4.0 - 2026-07-23
+## v0.3.1 - 2026-07-23
 
 ### Added
 
@@ -31,7 +31,7 @@ The format is simple on purpose:
 ### Docs
 
 - README now documents the chunk error contracts, configurable lower provider limits, and exact collection lifecycle APIs.
-- The external consumer integration check now compiles and runs the v0.4.0 public surface from a separate Go module.
+- The external consumer integration check now compiles and runs the v0.3.1 public surface from a separate Go module.
 
 ## v0.3.0 - 2026-04-24
 
