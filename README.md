@@ -8,6 +8,12 @@
 
 It is built for teams that want BM25 plus vector recall inside Postgres, without standing up a separate search service, queue, or worker fleet.
 
+## Keyword indexing before embeddings
+
+Set `Config.KeywordOnly = true` to build and query BM25 without an embedding service. No embedder or dimensions are required. Chunks keep `NULL` embeddings; the SDK does not generate substitute vectors. Keyword mode defaults searches to `SearchModeKeyword` and rejects explicit hybrid/vector requests.
+
+When an embedding service is ready, reopen the same database with `KeywordOnly: false`, real dimensions and an embedder, then call `Migrate` and upsert the documents again. Documents with missing embeddings are backfilled even when their content has not changed. Existing keyword documents and BM25 indexes remain available.
+
 ## North Star
 
 The north star for `simplykb` is simple:
@@ -531,3 +537,8 @@ This is the current design target for a single-node production deployment, not a
 - default candidate fan-out 20 per branch
 
 If you need multi-tenant auth, distributed writes, or much larger scale, that should be a deliberate next system, not an accidental extension of this SDK.
+
+For keyword results grouped by document, set `SearchRequest.GroupByDocument` to
+`true`. The candidate limit then counts documents, with each represented by its
+best scoring chunk and a plain excerpt. This prevents large documents from
+crowding out other matches. Grouping currently requires `SearchModeKeyword`.

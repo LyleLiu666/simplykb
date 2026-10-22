@@ -710,7 +710,7 @@ func TestIntegrationMigrateUpgradesOlderSchemaWithoutLosingData(t *testing.T) {
 	}
 
 	gotVersions := appliedMigrationVersions(t, ctx, store.pool)
-	wantVersions := []int64{1, 2, 3, 4}
+	wantVersions := []int64{1, 2, 3, 4, 5}
 	if !slices.Equal(gotVersions, wantVersions) {
 		t.Fatalf("migration versions = %v, want %v", gotVersions, wantVersions)
 	}

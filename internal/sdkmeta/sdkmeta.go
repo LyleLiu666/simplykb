@@ -8,7 +8,9 @@ const (
 	MigrationVersionDropRedundantIndex  int64 = 3
 	MigrationVersionMetadataFilterIndex int64 = 4
 
-	LatestSchemaMigrationVersion = MigrationVersionMetadataFilterIndex
+	MigrationVersionOptionalEmbeddings int64 = 5
+
+	LatestSchemaMigrationVersion = MigrationVersionOptionalEmbeddings
 )
 
 var requiredExtensionNames = []string{"pg_search", "vector"}
