@@ -62,12 +62,15 @@ type CollectionStats struct {
 }
 
 type SearchRequest struct {
-	Collection     string
-	Query          string
-	Limit          int
-	CandidateLimit int
-	Mode           SearchMode
-	MetadataFilter map[string]any
+	// GroupByDocument returns the best matching chunk per document before applying
+	// limits. Currently supported for keyword search only.
+	GroupByDocument bool
+	Collection      string
+	Query           string
+	Limit           int
+	CandidateLimit  int
+	Mode            SearchMode
+	MetadataFilter  map[string]any
 }
 
 type SearchHit struct {

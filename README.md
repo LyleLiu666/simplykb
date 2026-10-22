@@ -537,3 +537,8 @@ This is the current design target for a single-node production deployment, not a
 - default candidate fan-out 20 per branch
 
 If you need multi-tenant auth, distributed writes, or much larger scale, that should be a deliberate next system, not an accidental extension of this SDK.
+
+For keyword results grouped by document, set `SearchRequest.GroupByDocument` to
+`true`. The candidate limit then counts documents, with each represented by its
+best scoring chunk and a plain excerpt. This prevents large documents from
+crowding out other matches. Grouping currently requires `SearchModeKeyword`.

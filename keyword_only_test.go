@@ -2,6 +2,7 @@ package simplykb
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -60,5 +61,34 @@ func TestIntegrationKeywordOnlyCanBackfillVectorsWithoutLosingDocuments(t *testi
 	hits, err = semantic.Search(ctx, SearchRequest{Query: "PubMed", Mode: SearchModeKeyword})
 	if err != nil || len(hits) == 0 || hits[0].DocumentID != "persistent" {
 		t.Fatalf("keyword document lost during vector enablement: %#v %v", hits, err)
+	}
+}
+
+func TestIntegrationKeywordDocumentLimitDoesNotStarveOtherDocuments(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := integrationDatabaseURL(t)
+	schema := createIntegrationSchema(t, databaseURL)
+	store := newIntegrationStore(t, databaseURL, schema, Config{KeywordOnly: true})
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []UpsertDocumentRequest{
+		{DocumentID: "long", Content: strings.Repeat("python workflow\n\n", 2000)},
+		{DocumentID: "short", Content: "python workflow"},
+	} {
+		if _, err := store.UpsertDocument(ctx, req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hits, err := store.Search(ctx, SearchRequest{Query: "python", Limit: 2, CandidateLimit: 2, GroupByDocument: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, hit := range hits {
+		seen[hit.DocumentID] = true
+	}
+	if len(hits) != 2 || !seen["long"] || !seen["short"] {
+		t.Fatalf("document quota consumed by duplicate chunks: %#v", hits)
 	}
 }

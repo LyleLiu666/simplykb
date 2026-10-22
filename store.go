@@ -363,7 +363,7 @@ func (s *Store) SearchDetailed(ctx context.Context, req SearchRequest) (SearchRe
 }
 
 func (s *Store) searchKeyword(ctx context.Context, req SearchRequest, filterJSON string) ([]candidateHit, error) {
-	rows, err := s.pool.Query(ctx, `
+	query := `
 SELECT
     id,
     collection,
@@ -383,7 +383,25 @@ WHERE collection = $1
   AND metadata @> $4::jsonb
 ORDER BY paradedb.score(id) DESC, id DESC
 LIMIT $3
-`, req.Collection, req.Query, req.CandidateLimit, filterJSON)
+`
+	if req.GroupByDocument {
+		// Rank matching IDs before fetching chunk bodies. Otherwise a long document
+		// can consume the candidate quota and hide other matching documents.
+		// The excerpt comes from the winning chunk, without rendering snippets for
+		// every matching chunk before deduplication.
+		query = `WITH best AS MATERIALIZED (
+   SELECT DISTINCT ON (document_external_id) id, paradedb.score(id) AS score
+   FROM kb_chunks
+   WHERE collection = $1 AND search_text ||| $2 AND metadata @> $4::jsonb
+   ORDER BY document_external_id, paradedb.score(id) DESC, id DESC
+  )
+  SELECT c.id, c.collection, c.document_external_id, c.chunk_key, c.chunk_no,
+   c.title, c.content, c.source_uri, c.tags, c.metadata, left(c.content, 300), best.score
+  FROM best JOIN kb_chunks c ON c.id = best.id
+  ORDER BY best.score DESC, c.id DESC
+  LIMIT $3`
+	}
+	rows, err := s.pool.Query(ctx, query, req.Collection, req.Query, req.CandidateLimit, filterJSON)
 	if err != nil {
 		return nil, fmt.Errorf("keyword search: %w", err)
 	}
@@ -959,6 +977,9 @@ func (s *Store) normalizeSearchRequest(req SearchRequest) SearchRequest {
 }
 
 func (s *Store) validateSearchRequest(req SearchRequest) error {
+	if req.GroupByDocument && req.Mode != SearchModeKeyword {
+		return errors.New("document grouping is only supported for keyword search")
+	}
 	if s.cfg.KeywordOnly && req.Mode != SearchModeKeyword {
 		return errors.New("semantic search is disabled in keyword-only mode")
 	}
