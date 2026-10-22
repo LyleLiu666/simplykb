@@ -15,6 +15,8 @@ const (
 )
 
 type Config struct {
+	// KeywordOnly indexes and searches BM25 without producing synthetic vectors.
+	KeywordOnly             bool
 	DatabaseURL             string
 	DefaultCollection       string
 	EmbeddingDimensions     int
@@ -63,10 +65,10 @@ func (c Config) validate() error {
 	if c.DatabaseURL == "" {
 		return errors.New("database url is required")
 	}
-	if c.EmbeddingDimensions <= 0 {
+	if !c.KeywordOnly && c.EmbeddingDimensions <= 0 {
 		return errors.New("embedding dimensions must be greater than 0")
 	}
-	if c.Embedder == nil {
+	if !c.KeywordOnly && c.Embedder == nil {
 		return errors.New("embedder is required")
 	}
 	if c.MinConns < 0 {

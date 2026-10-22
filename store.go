@@ -43,15 +43,16 @@ const (
 )
 
 type documentSnapshot struct {
-	exists       bool
-	internalID   int64
-	title        string
-	sourceURI    string
-	tags         []string
-	metadataJSON string
-	contentHash  string
-	chunkCount   int
-	updatedAt    time.Time
+	missingEmbeddings bool
+	exists            bool
+	internalID        int64
+	title             string
+	sourceURI         string
+	tags              []string
+	metadataJSON      string
+	contentHash       string
+	chunkCount        int
+	updatedAt         time.Time
 }
 
 type preparedDocumentWrite struct {
@@ -148,7 +149,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	rows.Close()
 
-	for _, migration := range schemaMigrations(s.cfg.EmbeddingDimensions) {
+	dimensions := s.cfg.EmbeddingDimensions
+	if s.cfg.KeywordOnly {
+		dimensions = 0
+	}
+	for _, migration := range schemaMigrations(dimensions) {
 		if _, ok := applied[migration.version]; ok {
 			continue
 		}
@@ -163,7 +168,7 @@ VALUES ($1, $2)
 		}
 	}
 
-	if err := ensureEmbeddingDimensions(ctx, tx, s.cfg.EmbeddingDimensions); err != nil {
+	if err := ensureEmbeddingDimensions(ctx, tx, dimensions); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -208,6 +213,7 @@ func (s *Store) writeDocument(ctx context.Context, req UpsertDocumentRequest, fo
 		return DocumentStats{}, err
 	}
 
+	forceReindex = forceReindex || (!s.cfg.KeywordOnly && existing.missingEmbeddings)
 	action := classifyDocumentWrite(existing, req, contentHash, metadataJSON, forceReindex)
 	switch action {
 	case documentWriteActionNoop, documentWriteActionMetadataRefresh:
@@ -403,6 +409,7 @@ SELECT
 FROM kb_chunks
 WHERE collection = $1
   AND metadata @> $3::jsonb
+  AND embedding IS NOT NULL
 ORDER BY embedding <=> $2::vector ASC, id DESC
 LIMIT $4
 `, req.Collection, vectorLiteral(vector), filterJSON, req.CandidateLimit)
@@ -590,6 +597,10 @@ func (s *Store) prepareDocumentWrite(ctx context.Context, req UpsertDocumentRequ
 		return preparedDocumentWrite{}, err
 	}
 
+	if s.cfg.KeywordOnly {
+		return preparedDocumentWrite{chunks: chunks}, nil
+	}
+
 	texts := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {
 		texts = append(texts, chunk.Content)
@@ -755,6 +766,10 @@ WHERE collection = $1 AND document_id = $2
 
 	batch := &pgx.Batch{}
 	for i, chunk := range prepared.chunks {
+		var embedding any
+		if len(prepared.vectors) > 0 {
+			embedding = vectorLiteral(prepared.vectors[i])
+		}
 		batch.Queue(`
 INSERT INTO kb_chunks (
     collection,
@@ -769,7 +784,7 @@ INSERT INTO kb_chunks (
     metadata,
     embedding
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::vector)
-`, req.Collection, internalDocumentID, req.DocumentID, chunkKey(req.DocumentID, chunk.Ordinal), chunk.Ordinal, req.Title, chunk.Content, req.SourceURI, req.Tags, metadataJSON, vectorLiteral(prepared.vectors[i]))
+`, req.Collection, internalDocumentID, req.DocumentID, chunkKey(req.DocumentID, chunk.Ordinal), chunk.Ordinal, req.Title, chunk.Content, req.SourceURI, req.Tags, metadataJSON, embedding)
 	}
 
 	results := tx.SendBatch(ctx, batch)
@@ -810,7 +825,8 @@ func acquireDocumentWriteLock(ctx context.Context, tx pgx.Tx, collection string,
 
 func loadDocumentSnapshot(ctx context.Context, rower queryRower, collection string, documentID string, forUpdate bool) (documentSnapshot, error) {
 	query := `
-SELECT id, title, source_uri, tags, metadata, content_hash, chunk_count, updated_at
+SELECT id, title, source_uri, tags, metadata, content_hash, chunk_count, updated_at,
+ EXISTS (SELECT 1 FROM kb_chunks WHERE document_id = kb_documents.id AND embedding IS NULL)
 FROM kb_documents
 WHERE collection = $1 AND external_id = $2`
 	if forUpdate {
@@ -831,6 +847,7 @@ FOR UPDATE`
 		&snapshot.contentHash,
 		&snapshot.chunkCount,
 		&snapshot.updatedAt,
+		&snapshot.missingEmbeddings,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -862,6 +879,7 @@ func documentSnapshotsEqual(left documentSnapshot, right documentSnapshot) bool 
 		left.metadataJSON == right.metadataJSON &&
 		left.contentHash == right.contentHash &&
 		left.chunkCount == right.chunkCount &&
+		left.missingEmbeddings == right.missingEmbeddings &&
 		left.updatedAt.Equal(right.updatedAt) &&
 		slices.Equal(left.tags, right.tags)
 }
@@ -932,12 +950,18 @@ func (s *Store) normalizeSearchRequest(req SearchRequest) SearchRequest {
 	}
 	if req.Mode == "" {
 		req.Mode = SearchModeHybrid
+		if s.cfg.KeywordOnly {
+			req.Mode = SearchModeKeyword
+		}
 	}
 	req.MetadataFilter = normalizeMetadata(req.MetadataFilter)
 	return req
 }
 
 func (s *Store) validateSearchRequest(req SearchRequest) error {
+	if s.cfg.KeywordOnly && req.Mode != SearchModeKeyword {
+		return errors.New("semantic search is disabled in keyword-only mode")
+	}
 	if req.Query == "" {
 		return errors.New("query is required")
 	}
@@ -1030,6 +1054,9 @@ func vectorLiteral(vector []float32) string {
 }
 
 func ensureEmbeddingDimensions(ctx context.Context, tx pgx.Tx, expected int) error {
+	if expected <= 0 {
+		return nil
+	}
 	var typeName string
 	err := tx.QueryRow(ctx, `
 SELECT pg_catalog.format_type(a.atttypid, a.atttypmod)
@@ -1049,12 +1076,21 @@ WHERE n.nspname = current_schema()
 		return fmt.Errorf("load embedding column type: %w", err)
 	}
 
+	if typeName == "vector" {
+		if _, err := tx.Exec(ctx, fmt.Sprintf("ALTER TABLE kb_chunks ALTER COLUMN embedding TYPE vector(%d)", expected)); err != nil {
+			return fmt.Errorf("configure vector dimensions: %w", err)
+		}
+		typeName = fmt.Sprintf("vector(%d)", expected)
+	}
 	actual, err := parseVectorDimensions(typeName)
 	if err != nil {
 		return err
 	}
 	if actual != expected {
 		return fmt.Errorf("schema embedding dimension mismatch: database=%d config=%d", actual, expected)
+	}
+	if _, err := tx.Exec(ctx, embeddingIndexSQL); err != nil {
+		return fmt.Errorf("create vector index: %w", err)
 	}
 	return nil
 }

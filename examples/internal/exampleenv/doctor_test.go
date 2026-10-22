@@ -94,7 +94,7 @@ func TestDatabaseDiagnosticsStatusDetectsOutdatedSchema(t *testing.T) {
 	if !strings.Contains(status, "behind current version") {
 		t.Fatalf("Status() = %q, want outdated schema guidance", status)
 	}
-	if !strings.Contains(status, "2 < 4") {
+	if !strings.Contains(status, "2 < 5") {
 		t.Fatalf("Status() = %q, want concrete version numbers", status)
 	}
 }

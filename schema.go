@@ -21,7 +21,17 @@ CREATE TABLE IF NOT EXISTS kb_schema_migrations (
 );`
 }
 
+const embeddingIndexSQL = `CREATE INDEX IF NOT EXISTS kb_chunks_embedding_idx
+    ON kb_chunks USING hnsw (embedding vector_cosine_ops);`
+
 func schemaMigrations(dimensions int) []migration {
+	embeddingType := "vector"
+	embeddingIndex := ""
+	if dimensions > 0 {
+		embeddingType = fmt.Sprintf("vector(%d)", dimensions)
+		embeddingIndex = embeddingIndexSQL
+	}
+
 	return []migration{
 		{
 			version: sdkmeta.MigrationVersionBaseTables,
@@ -58,19 +68,17 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     source_uri TEXT NOT NULL DEFAULT '',
     tags TEXT[] NOT NULL DEFAULT '{}',
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    embedding vector(%d) NOT NULL,
+    embedding %s,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (collection, document_external_id, chunk_no),
     UNIQUE (collection, chunk_key)
-);`, dimensions),
+);`, embeddingType),
 		},
 		{
 			version: sdkmeta.MigrationVersionIndexes,
 			name:    "indexes",
-			sql: `
-CREATE INDEX IF NOT EXISTS kb_chunks_embedding_idx
-    ON kb_chunks USING hnsw (embedding vector_cosine_ops);
+			sql: embeddingIndex + `
 
 DO $$
 BEGIN
@@ -104,5 +112,6 @@ DROP INDEX IF EXISTS kb_chunks_key_idx;`,
 CREATE INDEX IF NOT EXISTS kb_chunks_metadata_idx
     ON kb_chunks USING gin (metadata jsonb_path_ops);`,
 		},
+		{version: sdkmeta.MigrationVersionOptionalEmbeddings, name: "optional_embeddings", sql: `ALTER TABLE kb_chunks ALTER COLUMN embedding DROP NOT NULL;`},
 	}
 }
